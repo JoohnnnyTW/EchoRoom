@@ -1,0 +1,16 @@
+# netlify.toml
+
+[functions]
+  # 指定 Netlify Functions 所在的目錄
+  directory = "netlify/functions"
+
+# 您可能還需要設定建置指令和發布目錄，
+# 但如果您的專案是像現在這樣的純靜態網站，
+# 並且 Netlify 已經可以正確部署您的 GitHub Pages 內容，
+# 您可能不需要額外的 build 設定。
+# 如果您之前是手動將 GitHub Pages 作為來源，
+# 現在您可能會讓 Netlify 直接從您的 repo 建置。
+# 例如：
+# [build]
+#   command = "echo 'No build command for static site, functions will be built'" # 如果沒有建置步驟
+#   publish = "." # 您目前的靜態檔案在根目錄

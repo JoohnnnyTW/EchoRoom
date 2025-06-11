@@ -1,66 +1,112 @@
-// 引入 openai 套件
-import OpenAI from 'openai';
+// netlify/functions/generateOpenaiImage.js
+const OpenAI = require('openai');
+const fetch = require('node-fetch'); // For fetching image from URL
 
-// Netlify Function 的標準處理函式
-// event: 包含請求的資訊 (如請求體、方法等)
-// context: 包含執行環境的資訊
+// Helper function to extract MIME type from URL or content type header
+function getMimeTypeFromHeadersOrDefault(responseHeaders, fallbackUrl, defaultMimeType = 'image/png') {
+  const contentType = responseHeaders.get('content-type');
+  if (contentType && contentType.startsWith('image/')) {
+    return contentType;
+  }
+  // Fallback to URL extension if content-type is missing or not an image
+  if (fallbackUrl) {
+    try {
+      const url = new URL(fallbackUrl);
+      const extension = url.pathname.split('.').pop()?.toLowerCase();
+      if (extension === 'jpg' || extension === 'jpeg') return 'image/jpeg';
+      if (extension === 'png') return 'image/png';
+      if (extension === 'webp') return 'image/webp';
+      if (extension === 'gif') return 'image/gif';
+    } catch (e) {
+      console.warn("OpenAI Proxy: Could not parse image URL for MIME type. Error:", e.message);
+    }
+  }
+  return defaultMimeType;
+}
+
+
 export async function handler(event, context) {
-  // 1. 只允許 POST 請求
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: 'Method Not Allowed' };
   }
 
   try {
-    // 2. 從前端請求的 body 中獲取資料
-    // event.body 是一個 JSON 字串，需要解析
-    const { prompt, size, quality, style } = JSON.parse(event.body);
+    const { prompt, size } = JSON.parse(event.body); // Removed quality, style as they might not be supported
+    const apiKey = process.env.OPENAI_API_KEY_FOR_PROXY;
 
-    // 3. 從 Netlify 的環境變數中安全地獲取您的 OpenAI API 金鑰
-    //    這個環境變數需要在 Netlify 網站的 UI 中設定 (見步驟 5)
-    const apiKey = process.env.OPENAI_API_KEY_FOR_PROXY; // 注意變數名稱
-
-    // 檢查 API 金鑰和提示詞是否存在
     if (!apiKey) {
-      return { statusCode: 500, body: JSON.stringify({ error: 'OpenAI API key not configured on server.' }) };
+      return { statusCode: 500, body: JSON.stringify({ error: 'OpenAI API key not configured on server (OPENAI_API_KEY_FOR_PROXY).' }) };
     }
     if (!prompt) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Prompt is required.' }) };
     }
 
-    // 4. 初始化 OpenAI 客戶端
     const openai = new OpenAI({ apiKey });
 
-    // 5. 呼叫 OpenAI API 生成圖像
+    console.log(`OpenAI Proxy: Requesting image with model "gpt-image-1", prompt: "${prompt}", size: ${size || "1024x1024"}`);
+
     const response = await openai.images.generate({
-      model: "gpt-image-1", // 您可以根據需要更改模型
+      model: "gpt-image-1", // User requested model
       prompt: prompt,
-      n: 1, // 生成一張圖像
-      size: size || "1024x1024", // 使用前端傳來的尺寸，或預設值
-      response_format: "b64_json", // 以 Base64 編碼的 JSON 格式返回圖像
-      quality: quality || "standard",
-      style: style || "vivid"
+      n: 1,
+      size: size || "1024x1024", // Default size, ensure this is valid for "gpt-image-1"
+      // response_format: "b64_json", // Removed as it caused errors with "gpt-image-1"
+      // quality: quality, // Removed
+      // style: style,     // Removed
     });
 
-    // 6. 處理 OpenAI 的回應
-    if (response.data && response.data[0] && response.data[0].b64_json) {
-      // 成功：將 Base64 圖像資料返回給前端
-      return {
-        statusCode: 200,
-        headers: { 'Content-Type': 'application/json' }, // 告訴瀏覽器這是 JSON
-        body: JSON.stringify({ b64_json: response.data[0].b64_json }),
-      };
+    console.log("OpenAI Proxy: Raw response from OpenAI API:", JSON.stringify(response, null, 2).substring(0, 500));
+
+    if (response.data && response.data[0]) {
+      if (response.data[0].b64_json) {
+        // If API directly returns b64_json (unexpected for default but good to handle)
+        console.log("OpenAI Proxy: Received b64_json directly from API.");
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ b64_json: response.data[0].b64_json, mime_type: 'image/png' }), // Assuming PNG if b64
+        };
+      } else if (response.data[0].url) {
+        // If API returns a URL, fetch the image and convert to Base64
+        const imageUrl = response.data[0].url;
+        console.log(`OpenAI Proxy: Received image URL: ${imageUrl}. Fetching image...`);
+
+        const imageFetchResponse = await fetch(imageUrl);
+        if (!imageFetchResponse.ok) {
+          console.error(`OpenAI Proxy: Failed to fetch image from URL: ${imageUrl}. Status: ${imageFetchResponse.status}`);
+          throw new Error(`Failed to fetch image from OpenAI URL (Status: ${imageFetchResponse.status})`);
+        }
+
+        const imageBuffer = await imageFetchResponse.buffer();
+        const imageBase64 = imageBuffer.toString('base64');
+        const mimeType = getMimeTypeFromHeadersOrDefault(imageFetchResponse.headers, imageUrl);
+        
+        console.log(`OpenAI Proxy: Successfully fetched and converted image from URL. MimeType: ${mimeType}`);
+        return {
+          statusCode: 200,
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ b64_json: imageBase64, mime_type: mimeType }),
+        };
+      } else {
+        console.error("OpenAI Proxy: API response did not contain b64_json or url.", response.data[0]);
+        throw new Error('OpenAI API response did not contain expected image data (b64_json or url).');
+      }
     } else {
-      // 如果 OpenAI 回應的格式不符合預期
-      console.error("OpenAI Proxy: Unexpected response structure from OpenAI API", response);
-      return { statusCode: 500, body: JSON.stringify({ error: 'Failed to get image data from OpenAI via proxy.' }) };
+      console.error("OpenAI Proxy: Unexpected response structure from OpenAI API. No data or data[0] found.", response);
+      throw new Error('Failed to get image data from OpenAI via proxy (unexpected response structure).');
     }
   } catch (error) {
-    // 7. 錯誤處理
     console.error('OpenAI Proxy Error:', error);
-    // 返回錯誤訊息給前端
+    // Attempt to return a more structured error if possible
+    const status = error.status || 500;
+    let errorMessage = error.message || 'Failed to generate image with OpenAI (gpt-image-1) via proxy.';
+    if (error.error && error.error.message) { // OpenAI SDK often nests error details
+        errorMessage = error.error.message;
+    }
+    
     return {
-      statusCode: error.status || 500, // 如果 OpenAI SDK 有 status，就用它
-      body: JSON.stringify({ error: error.message || 'Failed to generate image with OpenAI via proxy.' }),
+      statusCode: status,
+      body: JSON.stringify({ error: errorMessage, type: error.type, code: error.code, param: error.param }),
     };
   }
 }

@@ -1,19 +1,17 @@
 
 import React, { useState, useCallback, useMemo, useContext } from 'react';
 import { GoogleGenAI } from "@google/genai";
-import OpenAI from 'openai';
-import { GeneratedImage, PromptStateForHistory, ImageEngine } from '../types'; // Added ImageEngine
+// OpenAI client is no longer directly used in the frontend for image generation via proxy
+// import OpenAI from 'openai'; 
+import { GeneratedImage, PromptStateForHistory, ImageEngine } from '../types';
 import { LoadingSpinner } from './LoadingSpinner';
 import { PhotoIcon, ExclamationTriangleIcon } from './Icons';
 import { SettingsContext } from '../contexts/SettingsContext';
 
-// Removed type ImageEngine from here, it's now imported from types.ts
-
 interface ImageGeneratorProps {
   promptEn: string;
   geminiApiKey?: string;
-  openAIApiKey?: string;
-  // BFL.ai API Key will be read from process.env internally
+  openAIApiKey?: string; 
   onImageGenerated: (image: GeneratedImage, engine: ImageEngine) => void;
   onViewImage: (image: GeneratedImage) => void;
   currentPromptState: PromptStateForHistory;
@@ -32,7 +30,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [selectedEngine, setSelectedEngine] = useState<ImageEngine>('gemini');
 
-  const bflAIApiKey = process.env.BFL_API_KEY; // Read BFL.ai API key
+  const bflAIApiKey = process.env.BFL_API_KEY; 
 
   const settingsContext = useContext(SettingsContext);
   if (!settingsContext) {
@@ -45,15 +43,16 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
     return null;
   }, [geminiApiKey]);
 
-  const openaiClient = useMemo(() => {
-    if (openAIApiKey) {
-      return new OpenAI({ 
-        apiKey: openAIApiKey,
-        dangerouslyAllowBrowser: true
-      });
-    }
-    return null;
-  }, [openAIApiKey]);
+  // openaiClient is no longer initialized or used directly in the frontend
+  // const openaiClient = useMemo(() => {
+  //   if (openAIApiKey) {
+  //     return new OpenAI({ 
+  //       apiKey: openAIApiKey,
+  //       dangerouslyAllowBrowser: true // This was part of the problem, now handled by proxy
+  //     });
+  //   }
+  //   return null;
+  // }, [openAIApiKey]);
 
   const handleGenerateImage = useCallback(async () => {
     if (!promptEn) {
@@ -65,7 +64,8 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
       setError("Gemini API 金鑰未設定。無法使用 Gemini 生成圖像。");
       return;
     }
-    if (selectedEngine === 'openai' && !openaiClient) {
+    // Check for OpenAI API key presence to enable the engine, actual key is used by proxy
+    if (selectedEngine === 'openai' && !openAIApiKey) {
       setError("OpenAI API 金鑰未設定。無法使用 OpenAI 生成圖像。");
       return;
     }
@@ -103,72 +103,66 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
         } else {
           throw new Error("未從 Gemini 回應中找到圖像數據。");
         }
-      } else if (selectedEngine === 'openai' && openaiClient) {
-        const response = await openaiClient.images.generate({
-          model: "gpt-image-1", 
+      } else if (selectedEngine === 'openai' && openAIApiKey) { // Check key for UI enabling, not for client use
+        const requestBody = {
           prompt: promptEn,
-          n: 1,
-          size: imageGenSettings.openai.size, 
-          response_format: "b64_json",
-          quality: imageGenSettings.openai.quality, 
-          style: imageGenSettings.openai.style 
+          size: imageGenSettings.openai.size,
+          quality: imageGenSettings.openai.quality,
+          style: imageGenSettings.openai.style
+        };
+        const proxyResponse = await fetch('/.netlify/functions/generateOpenaiImage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
         });
 
-        if (response.data && response.data[0] && response.data[0].b64_json) {
+        if (!proxyResponse.ok) {
+          const errorData = await proxyResponse.json().catch(() => ({ error: `OpenAI 代理錯誤 (${proxyResponse.status})` }));
+          throw new Error(errorData.error || `OpenAI 代理請求失敗 (${proxyResponse.status})`);
+        }
+        const responseData = await proxyResponse.json();
+
+        if (responseData.b64_json) {
           newImage = {
             id: `img-${Date.now()}-openai`,
-            src: `data:image/png;base64,${response.data[0].b64_json}`,
+            src: `data:image/png;base64,${responseData.b64_json}`,
             prompt: promptEn,
           };
         } else {
-          throw new Error("未從 OpenAI 回應中找到圖像數據。");
+          throw new Error("未從 OpenAI 代理回應中找到圖像數據。");
         }
-      } else if (selectedEngine === 'bfl_ai' && bflAIApiKey) {
+      } else if (selectedEngine === 'bfl_ai' && bflAIApiKey) { // Check key for UI enabling
         const bflConfig = imageGenSettings.bfl_ai;
         const requestBody = {
           prompt: promptEn,
-          // image_prompt: "", // Optional, not configured for now
           width: bflConfig.width,
           height: bflConfig.height,
           prompt_upsampling: bflConfig.prompt_upsampling,
           seed: bflConfig.seed,
           safety_tolerance: bflConfig.safety_tolerance,
           output_format: bflConfig.output_format,
-          // webhook_url and webhook_secret are ignored for sync operation
         };
-        const fetchOptions = {
+        const proxyResponse = await fetch('/.netlify/functions/generateBflaiImage', {
           method: 'POST',
-          headers: {
-            'x-key': bflAIApiKey,
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(requestBody)
-        };
-        const bflResponse = await fetch('https://api.bfl.ai/v1/flux-pro-1.1', fetchOptions);
-        if (!bflResponse.ok) {
-          const errorData = await bflResponse.json().catch(() => ({ message: bflResponse.statusText }));
-          throw new Error(`BFL.ai API 錯誤 (${bflResponse.status}): ${errorData.message || 'Unknown error'}`);
-        }
-        const responseData = await bflResponse.json();
+        });
         
-        // Assuming responseData contains image like: { images: [{ image_b64: "...", mime_type: "..." }] }
-        // Or simpler: { image_b64: "...", mime_type: "image/jpeg" } - let's try a simpler one first
-        // The API snippet suggests output_format in request, so mime_type might be fixed by that.
-        // Let's assume the response directly gives base64 and we use the requested output_format for mime type.
-        // This is an assumption; actual BFL.ai API response structure needs verification.
-        // A common pattern is responseData.images[0].b64_json or responseData.image_b64
-        // For this example, let's assume `responseData.image_b64` exists.
-        if (responseData.image_b64 || (responseData.images && responseData.images[0] && responseData.images[0].image_b64)) {
-            const base64Data = responseData.image_b64 || responseData.images[0].image_b64;
-            const mimeType = responseData.mime_type || `image/${bflConfig.output_format}`;
+        if (!proxyResponse.ok) {
+          const errorData = await proxyResponse.json().catch(() => ({ error: `BFL.ai 代理錯誤 (${proxyResponse.status})` }));
+          throw new Error(errorData.error || `BFL.ai 代理請求失敗 (${proxyResponse.status})`);
+        }
+        const responseData = await proxyResponse.json();
+        
+        if (responseData.image_b64 && responseData.mime_type) {
             newImage = {
                 id: `img-${Date.now()}-bflai`,
-                src: `data:${mimeType};base64,${base64Data}`,
+                src: `data:${responseData.mime_type};base64,${responseData.image_b64}`,
                 prompt: promptEn,
             };
         } else {
-          console.error("BFL.ai response data:", responseData);
-          throw new Error("未從 BFL.ai 回應中找到圖像數據或格式不符。");
+          console.error("BFL.ai proxy response data:", responseData);
+          throw new Error("未從 BFL.ai 代理回應中找到圖像數據或格式不符。");
         }
       }
 
@@ -180,32 +174,28 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
       }
 
     } catch (e: any) {
-      console.error(`生成圖像時出錯 (using ${selectedEngine}):`, e);
+      console.error(`生成圖像時出錯 (using ${selectedEngine} via proxy):`, e);
       let message = e.message || '未知錯誤';
-      if (e.error && e.error.message) { 
-        message = e.error.message;
-      } else if (e.response && e.response.data && e.response.data.error && e.response.data.error.message) { 
-        message = e.response.data.error.message;
-      }
+      // More specific error extraction might not be needed if proxy returns clear { error: "message" }
       setError(`生成圖像失敗：${message}`);
     } finally {
       setIsLoading(false);
     }
-  }, [promptEn, geminiClient, openaiClient, bflAIApiKey, onImageGenerated, selectedEngine, imageGenSettings]);
+  }, [promptEn, geminiClient, openAIApiKey, bflAIApiKey, onImageGenerated, selectedEngine, imageGenSettings]);
 
   const getEngineDisplayName = (engine: ImageEngine) => {
     switch (engine) {
       case 'gemini': return 'Gemini (Imagen 3)';
-      case 'openai': return 'OpenAI (gpt-image-1)';
-      case 'bfl_ai': return 'BFL.ai (Flux Pro)';
+      case 'openai': return 'OpenAI (gpt-image-1 via Proxy)';
+      case 'bfl_ai': return 'BFL.ai (Flux Pro via Proxy)';
       default: return engine;
     }
   };
   
   const isEngineAvailable = (engine: ImageEngine) => {
     if (engine === 'gemini') return !!geminiApiKey;
-    if (engine === 'openai') return !!openAIApiKey;
-    if (engine === 'bfl_ai') return !!bflAIApiKey;
+    if (engine === 'openai') return !!openAIApiKey; // Key presence enables UI, proxy uses its own key
+    if (engine === 'bfl_ai') return !!bflAIApiKey;   // Key presence enables UI, proxy uses its own key
     return false;
   };
 

@@ -1,0 +1,43 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main # 或者您的主要分支名稱，例如 master
+
+permissions:
+  contents: read
+  pages: write # 需要寫入 GitHub Pages 的權限
+  id-token: write # 需要 OpenID Connect (OIDC) token 的權限，供 actions/deploy-pages 使用
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create env-config.js
+        run: |
+          echo "window.process = window.process || {};" > env-config.js
+          echo "window.process.env = window.process.env || {};" >> env-config.js
+          echo "Object.assign(window.process.env, {" >> env-config.js
+          echo "  API_KEY: '${{ secrets.GEMINI_API_KEY_SECRET }}'," >> env-config.js
+          echo "  OPENAI_API_KEY: '${{ secrets.OPENAI_API_KEY_SECRET }}'," >> env-config.js
+          echo "  BFL_API_KEY: '${{ secrets.BFL_API_KEY_SECRET }}'" >> env-config.js
+          echo "});" >> env-config.js
+          echo "console.log('env-config.js created for GitHub Pages deployment.');" >> env-config.js
+          # 可選：在 Action Log 中顯示檔案內容以供除錯
+          # cat env-config.js
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.' # 上傳整個專案目錄的內容，因為您沒有特定的 build 輸出目錄
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

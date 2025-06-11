@@ -24,8 +24,8 @@ export const DEFAULT_GEMINI_CONFIG: GeminiImageConfig = {
 
 // Updated DEFAULT_BFL_AI_CONFIG to use one of the new standard options
 export const DEFAULT_BFL_AI_CONFIG: BFLAIImageConfig = {
-  width: 1440, // Changed from 1440
-  height: 832, // Changed from 832 to match 16:9 (1440x832)
+  width: 1440, 
+  height: 832, 
   prompt_upsampling: false,
   seed: 42,
   safety_tolerance: 2,

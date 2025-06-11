@@ -25,3 +25,4 @@ try {
 } catch (error) {
   console.error(`Error creating env-config.js: ${error.message}`);
   process.exit(1); // Exit with error code if file creation fails
+}

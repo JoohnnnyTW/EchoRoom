@@ -2,8 +2,8 @@
 // netlify/functions/generateBflaiImage.js
 const fetch = require('node-fetch'); // Using CommonJS require
 
-const POLLING_INTERVAL = 2500; // 2.5 秒輪詢一次
-const MAX_POLLING_ATTEMPTS = 5; // 最多輪詢5次 (Netlify Functions free tier has 10s limit)
+const POLLING_INTERVAL = 3000; // 3 秒輪詢一次
+const MAX_POLLING_ATTEMPTS = 6; // 最多輪詢6次 (Netlify Functions free tier has 10s limit)
 
 // Helper function to extract MIME type from URL if possible
 function getMimeTypeFromUrl(url, fallbackMimeType = 'image/jpeg') {

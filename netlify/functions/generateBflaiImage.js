@@ -112,7 +112,7 @@ export async function handler(event, context) {
     };
 
     console.log("BFL.ai Proxy: Sending initial request to BFL.ai API with body:", JSON.stringify(requestBody));
-    const initialBflResponse = await fetch('https://api.bfl.ai/v1/flux-pro-1.1-ultra', fetchOptions); // Updated endpoint
+    const initialBflResponse = await fetch('https://api.bfl.ai/v1/flux-pro-1.1', fetchOptions);
     const initialResponseText = await initialBflResponse.text();
     console.log(`BFL.ai Proxy: Initial response status: ${initialBflResponse.status}, Raw text: ${initialResponseText.substring(0, 500)}`);
 

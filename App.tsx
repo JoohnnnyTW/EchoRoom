@@ -102,9 +102,22 @@ const AppContent: React.FC = () => {
   const [isLoadingRandomPrompts, setIsLoadingRandomPrompts] = useState<boolean>(false); // New
   const [randomPromptsError, setRandomPromptsError] = useState<string | null>(null); // New
 
+  // These will be populated by env-config.js
   const geminiApiKey = process.env.API_KEY;
-  const openAIApiKey = process.env.OPENAI_API_KEY;
   const bflAIApiKey = process.env.BFL_API_KEY; 
+
+  // Debug log for API keys
+  useEffect(() => {
+    console.log("App.tsx: Effective API Keys from process.env:", {
+      gemini: geminiApiKey ? 'Loaded' : 'Not Loaded',
+      bfl_ai: bflAIApiKey ? 'Loaded' : 'Not Loaded',
+    });
+    console.log("Raw values:", {
+        geminiRaw: process.env.API_KEY,
+        bflAIRaw: process.env.BFL_API_KEY
+    });
+  }, [geminiApiKey, bflAIApiKey]);
+
 
   const ai = useMemo(() => geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null, [geminiApiKey]);
   const rightColumnRef = useRef<HTMLDivElement>(null);
@@ -467,21 +480,44 @@ Ensure the output is only the JSON array.`;
   }, [ai, selectedStyle, selectedRoomType, relevantCategories, userPromptCategories]);
 
 
-  if (!geminiApiKey && !openAIApiKey && !bflAIApiKey) {
-    return (
-      <div className="flex items-center justify-center h-screen bg-white">
-        <div className="p-8 bg-white shadow-xl rounded-lg text-center">
-          <h1 className="text-2xl font-bold text-gray-800 mb-4">API 金鑰錯誤</h1>
-          <p className="text-gray-700">任何 AI 服務的 API 金鑰均未設定。</p>
-          <p className="text-gray-600 mt-2 text-sm">請確保下列至少一個環境變數已設定：</p>
-          <ul className="text-gray-600 mt-1 text-xs list-disc list-inside">
-            <li><code className="bg-gray-200 p-1 rounded">process.env.API_KEY</code> (Gemini)</li>
-            <li><code className="bg-gray-200 p-1 rounded">process.env.OPENAI_API_KEY</code> (OpenAI)</li>
-            <li><code className="bg-gray-200 p-1 rounded">process.env.BFL_API_KEY</code> (BFL.ai)</li>
-          </ul>
-        </div>
-      </div>
-    );
+  // Check if at least one API key is available
+  const atLeastOneApiKeyConfigured = geminiApiKey || bflAIApiKey;
+
+  if (!atLeastOneApiKeyConfigured && (typeof process.env.API_KEY === 'undefined' && typeof process.env.BFL_API_KEY === 'undefined')) {
+    // This condition might be too strict if env-config.js hasn't loaded yet.
+    // The console.log above will show if keys are 'Not Loaded' due to timing or actual absence.
+    // The key check in ImageGenerator is more practical for enabling/disabling features.
+    // This top-level check is for a catastrophic "no keys at all were even attempted to be loaded"
+    // which shouldn't happen if env-config.js is correctly sourced.
+    // A better check is if all are explicitly empty string after env-config.js attempted load.
+    
+    // If env-config.js has run, process.env.API_KEY etc will exist, even if as empty strings.
+    // So if they are *still* undefined, env-config.js probably didn't run.
+    const envConfigLikelyNotRun = typeof process.env.API_KEY === 'undefined' && 
+                                  typeof process.env.BFL_API_KEY === 'undefined';
+    
+    // Only show the blocking error if env-config.js likely didn't run OR if it ran and all keys are still effectively null/empty.
+    // The individual components will disable themselves if their specific key is missing.
+    // This screen is for when *no* keys are available at all from the environment.
+    const allKeysEffectivelyMissing = !geminiApiKey && !bflAIApiKey;
+
+
+    if (allKeysEffectivelyMissing) {
+         return (
+          <div className="flex items-center justify-center h-screen bg-white">
+            <div className="p-8 bg-white shadow-xl rounded-lg text-center">
+              <h1 className="text-2xl font-bold text-gray-800 mb-4">API 金鑰錯誤</h1>
+              <p className="text-gray-700">任何 AI 服務的 API 金鑰均未設定。</p>
+              <p className="text-gray-600 mt-2 text-sm">請確保下列至少一個環境變數已設定（通常在 <code className="bg-gray-200 p-0.5 rounded text-xs">env-config.js</code> 或伺服器環境中）：</p>
+              <ul className="text-gray-600 mt-1 text-xs list-disc list-inside">
+                <li><code className="bg-gray-200 p-1 rounded">process.env.API_KEY</code> (Gemini)</li>
+                <li><code className="bg-gray-200 p-1 rounded">process.env.BFL_API_KEY</code> (BFL.ai)</li>
+              </ul>
+              {envConfigLikelyNotRun && <p className="text-red-500 text-xs mt-3">注意：<code className="bg-gray-200 p-0.5 rounded text-xs">env-config.js</code> 可能未正確載入。</p>}
+            </div>
+          </div>
+        );
+    }
   }
   
   return (
@@ -559,7 +595,7 @@ Ensure the output is only the JSON array.`;
           <div ref={rightColumnRef} className="lg:col-span-2 space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <PromptBuilder activeTerms={Array.from(activePromptTerms.values()).sort((a,b) => (a.order || 0) - (b.order || 0) )} onUpdateWeight={updateTermWeight} onToggleLock={toggleTermLock} onRemoveTerm={(termId) => setActivePromptTerms(prev => { const m = new Map(prev); m.delete(termId); return m; })} onClearAllTerms={handleClearAllTerms} generatedPromptEn={generatedPromptEn} generatedPromptZh={generatedPromptZh} onPolishPrompt={handlePolishPrompt} isPolishingEn={isPolishingEn} isPolishingZh={isPolishingZh} polishError={polishError} clearPolishError={() => setPolishError(null)} geminiApiKeySet={!!geminiApiKey} />
-              <ImageGenerator promptEn={generatedPromptEn} geminiApiKey={geminiApiKey} openAIApiKey={openAIApiKey} onImageGenerated={handleImageGenerated} onViewImage={handleViewImageFromGenerator} currentPromptState={{ selectedStyleId: selectedStyle?.id || null, selectedRoomTypeId: selectedRoomType?.id || null, activeTerms: Array.from(activePromptTerms.entries()) }} />
+              <ImageGenerator promptEn={generatedPromptEn} geminiApiKey={geminiApiKey} onImageGenerated={handleImageGenerated} onViewImage={handleViewImageFromGenerator} currentPromptState={{ selectedStyleId: selectedStyle?.id || null, selectedRoomTypeId: selectedRoomType?.id || null, activeTerms: Array.from(activePromptTerms.entries()) }} />
             </div>
             <ImageHistoryDisplay history={imageHistory} onViewImage={handleOpenImageDetail} onRestoreState={handleRestorePromptState} />
           </div>

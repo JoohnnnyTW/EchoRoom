@@ -15,7 +15,6 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
         const parsed = JSON.parse(storedSettings);
         return {
           gemini: { ...DEFAULT_IMAGE_GENERATION_SETTINGS.gemini, ...parsed.gemini },
-          openai: { ...DEFAULT_IMAGE_GENERATION_SETTINGS.openai, ...parsed.openai },
           bfl_ai: { ...DEFAULT_IMAGE_GENERATION_SETTINGS.bfl_ai, ...parsed.bfl_ai },
         };
       }
@@ -28,7 +27,6 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
   const updateSettings = useCallback((newSettings: Partial<ImageGenerationSettings>) => {
     setSettings(prevSettings => ({
       gemini: { ...prevSettings.gemini, ...newSettings.gemini },
-      openai: { ...prevSettings.openai, ...newSettings.openai },
       bfl_ai: { ...prevSettings.bfl_ai, ...newSettings.bfl_ai },
     }));
   }, []);

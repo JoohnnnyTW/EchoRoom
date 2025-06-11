@@ -14,12 +14,12 @@ const getEngineDisplayName = (engine: ImageEngine): string => {
   switch (engine) {
     case 'gemini':
       return 'Gemini';
-    case 'openai':
-      return 'OpenAI';
     case 'bfl_ai':
       return 'BFL.ai';
     default:
-      return engine;
+      // This should ideally not happen if ImageEngine type is strictly followed
+      const exhaustiveCheck: never = engine;
+      return exhaustiveCheck;
   }
 };
 

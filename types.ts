@@ -1,3 +1,4 @@
+
 export interface PromptTerm {
   id: string;
   termEn: string;
@@ -89,7 +90,7 @@ export interface PromptStateForHistory {
   activeTerms: [string, SelectedPromptTerm][]; 
 }
 
-export type ImageEngine = 'gemini' | 'openai' | 'bfl_ai';
+export type ImageEngine = 'gemini' | 'bfl_ai';
 
 export interface ImageHistoryEntry extends GeneratedImage {
   timestamp: number;
@@ -106,16 +107,6 @@ export interface GeminiImageConfig {
   outputMimeType: GeminiOutputMimeType;
 }
 
-export type OpenAISize = "1024x1024" | "1792x1024" | "1024x1792";
-export type OpenAIQuality = "standard" | "hd";
-export type OpenAIStyle = "vivid" | "natural";
-
-export interface OpenAIImageConfig {
-  size: OpenAISize;
-  quality: OpenAIQuality;
-  style: OpenAIStyle;
-}
-
 export type BFLAIOutputFormat = 'jpeg' | 'png' | 'webp';
 
 export interface BFLAIImageConfig {
@@ -129,7 +120,6 @@ export interface BFLAIImageConfig {
 
 export interface ImageGenerationSettings {
   gemini: GeminiImageConfig;
-  openai: OpenAIImageConfig;
   bfl_ai: BFLAIImageConfig;
 }
 

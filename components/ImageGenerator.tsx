@@ -1,8 +1,6 @@
 
-import React, { useState, useCallback, useMemo, useContext } from 'react';
+import React, { useState, useCallback, useMemo, useContext, useEffect } from 'react';
 import { GoogleGenAI } from "@google/genai";
-// OpenAI client is no longer directly used in the frontend for image generation via proxy
-// import OpenAI from 'openai'; 
 import { GeneratedImage, PromptStateForHistory, ImageEngine } from '../types';
 import { LoadingSpinner } from './LoadingSpinner';
 import { PhotoIcon, ExclamationTriangleIcon } from './Icons';
@@ -11,7 +9,6 @@ import { SettingsContext } from '../contexts/SettingsContext';
 interface ImageGeneratorProps {
   promptEn: string;
   geminiApiKey?: string;
-  openAIApiKey?: string; 
   onImageGenerated: (image: GeneratedImage, engine: ImageEngine) => void;
   onViewImage: (image: GeneratedImage) => void;
   currentPromptState: PromptStateForHistory;
@@ -20,7 +17,6 @@ interface ImageGeneratorProps {
 export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ 
   promptEn, 
   geminiApiKey, 
-  openAIApiKey, 
   onImageGenerated, 
   onViewImage, 
   currentPromptState 
@@ -43,17 +39,6 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
     return null;
   }, [geminiApiKey]);
 
-  // openaiClient is no longer initialized or used directly in the frontend
-  // const openaiClient = useMemo(() => {
-  //   if (openAIApiKey) {
-  //     return new OpenAI({ 
-  //       apiKey: openAIApiKey,
-  //       dangerouslyAllowBrowser: true // This was part of the problem, now handled by proxy
-  //     });
-  //   }
-  //   return null;
-  // }, [openAIApiKey]);
-
   const handleGenerateImage = useCallback(async () => {
     if (!promptEn) {
       setError("請先建立提示詞。");
@@ -62,11 +47,6 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
 
     if (selectedEngine === 'gemini' && !geminiClient) {
       setError("Gemini API 金鑰未設定。無法使用 Gemini 生成圖像。");
-      return;
-    }
-    // Check for OpenAI API key presence to enable the engine, actual key is used by proxy
-    if (selectedEngine === 'openai' && !openAIApiKey) {
-      setError("OpenAI API 金鑰未設定。無法使用 OpenAI 生成圖像。");
       return;
     }
     if (selectedEngine === 'bfl_ai' && !bflAIApiKey) {
@@ -103,35 +83,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
         } else {
           throw new Error("未從 Gemini 回應中找到圖像數據。");
         }
-      } else if (selectedEngine === 'openai' && openAIApiKey) { // Check key for UI enabling, not for client use
-        const requestBody = {
-          prompt: promptEn,
-          size: imageGenSettings.openai.size,
-          quality: imageGenSettings.openai.quality,
-          style: imageGenSettings.openai.style
-        };
-        const proxyResponse = await fetch('/.netlify/functions/generateOpenaiImage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(requestBody),
-        });
-
-        if (!proxyResponse.ok) {
-          const errorData = await proxyResponse.json().catch(() => ({ error: `OpenAI 代理錯誤 (${proxyResponse.status})` }));
-          throw new Error(errorData.error || `OpenAI 代理請求失敗 (${proxyResponse.status})`);
-        }
-        const responseData = await proxyResponse.json();
-
-        if (responseData.b64_json) {
-          newImage = {
-            id: `img-${Date.now()}-openai`,
-            src: `data:image/png;base64,${responseData.b64_json}`,
-            prompt: promptEn,
-          };
-        } else {
-          throw new Error("未從 OpenAI 代理回應中找到圖像數據。");
-        }
-      } else if (selectedEngine === 'bfl_ai' && bflAIApiKey) { // Check key for UI enabling
+      } else if (selectedEngine === 'bfl_ai' && bflAIApiKey) { 
         const bflConfig = imageGenSettings.bfl_ai;
         const requestBody = {
           prompt: promptEn,
@@ -176,31 +128,44 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
     } catch (e: any) {
       console.error(`生成圖像時出錯 (using ${selectedEngine} via proxy):`, e);
       let message = e.message || '未知錯誤';
-      // More specific error extraction might not be needed if proxy returns clear { error: "message" }
       setError(`生成圖像失敗：${message}`);
     } finally {
       setIsLoading(false);
     }
-  }, [promptEn, geminiClient, openAIApiKey, bflAIApiKey, onImageGenerated, selectedEngine, imageGenSettings]);
+  }, [promptEn, geminiClient, bflAIApiKey, onImageGenerated, selectedEngine, imageGenSettings]);
 
   const getEngineDisplayName = (engine: ImageEngine) => {
     switch (engine) {
-      case 'gemini': return 'Gemini (Imagen 3)';
-      case 'openai': return 'OpenAI (gpt-image-1 via Proxy)';
-      case 'bfl_ai': return 'BFL.ai (Flux Pro via Proxy)';
+      case 'gemini': return 'Gemini';
+      case 'bfl_ai': return 'FLUX 1.1 [pro]';
       default: return engine;
     }
   };
   
   const isEngineAvailable = (engine: ImageEngine) => {
     if (engine === 'gemini') return !!geminiApiKey;
-    if (engine === 'openai') return !!openAIApiKey; // Key presence enables UI, proxy uses its own key
-    if (engine === 'bfl_ai') return !!bflAIApiKey;   // Key presence enables UI, proxy uses its own key
+    if (engine === 'bfl_ai') return !!bflAIApiKey;
     return false;
   };
 
-  const availableEngines: ImageEngine[] = ['gemini', 'openai', 'bfl_ai'];
+  const availableEngines: ImageEngine[] = useMemo(() => ['gemini', 'bfl_ai'], []);
   const canGenerate = isEngineAvailable(selectedEngine);
+
+  // Ensure selectedEngine is valid if the previously selected one is no longer available
+  // or if the default engine is not available on load.
+  useEffect(() => {
+    if (!availableEngines.includes(selectedEngine) || !isEngineAvailable(selectedEngine)) {
+        const firstAvailable = availableEngines.find(isEngineAvailable);
+        if (firstAvailable) {
+            setSelectedEngine(firstAvailable);
+        } else if (availableEngines.length > 0) {
+             // Fallback to the first listed engine if none are currently "available" (e.g. keys not set)
+             // This maintains a selection, though generation might be disabled.
+            setSelectedEngine(availableEngines[0]);
+        }
+    }
+  }, [availableEngines, selectedEngine, isEngineAvailable]);
+
 
   return (
     <div className="p-4 bg-white rounded-xl shadow-lg space-y-4">
@@ -264,7 +229,6 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
         <div className="mt-4 space-y-3">
           <h4 className="text-sm font-medium text-gray-700">
             最新生成的圖像 ({getEngineDisplayName(selectedEngine)}
-            {selectedEngine === 'openai' && `, ${imageGenSettings.openai.size}`})
             {selectedEngine === 'gemini' && `, ${imageGenSettings.gemini.aspectRatio}`})
             {selectedEngine === 'bfl_ai' && `, ${imageGenSettings.bfl_ai.width}x${imageGenSettings.bfl_ai.height}`})
           </h4>

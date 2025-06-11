@@ -1,12 +1,11 @@
 
 import React, { useState, useContext, useEffect } from 'react';
 import { SettingsContext } from '../contexts/SettingsContext';
-import { ImageGenerationSettings, GeminiImageConfig, OpenAIImageConfig, BFLAIImageConfig, GeminiAspectRatio, GeminiOutputMimeType, OpenAISize, OpenAIQuality, OpenAIStyle, BFLAIOutputFormat } from '../types';
+import { ImageGenerationSettings, GeminiImageConfig, BFLAIImageConfig, GeminiAspectRatio, GeminiOutputMimeType, BFLAIOutputFormat } from '../types';
 import { XCircleIcon } from './Icons';
 import { 
   GEMINI_ASPECT_RATIOS, GEMINI_OUTPUT_MIME_TYPES, 
-  OPENAI_SIZES, OPENAI_QUALITIES, OPENAI_STYLES,
-  BFL_AI_OUTPUT_FORMATS
+  BFL_AI_OUTPUT_FORMATS, BFL_AI_RESOLUTION_OPTIONS // Import new resolution options
 } from '../constants/imageGenerationOptions';
 
 interface SettingsModalProps {
@@ -33,12 +32,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
     setEditableSettings(prev => ({ ...prev, gemini: { ...prev.gemini, [key]: value } }));
   };
 
-  const handleOpenAIChange = <K extends keyof OpenAIImageConfig>(key: K, value: OpenAIImageConfig[K]) => {
-    setEditableSettings(prev => ({ ...prev, openai: { ...prev.openai, [key]: value } }));
+  const handleBFLAIResolutionChange = (selectedValue: string) => {
+    const selectedOption = BFL_AI_RESOLUTION_OPTIONS.find(opt => opt.value === selectedValue);
+    if (selectedOption) {
+      setEditableSettings(prev => ({
+        ...prev,
+        bfl_ai: {
+          ...prev.bfl_ai,
+          width: selectedOption.width,
+          height: selectedOption.height,
+        }
+      }));
+    }
   };
 
-  const handleBFLAIChange = <K extends keyof BFLAIImageConfig>(key: K, value: BFLAIImageConfig[K]) => {
-    setEditableSettings(prev => ({ ...prev, bfl_ai: { ...prev.bfl_ai, [key]: value } }));
+  const handleBFLAIChange = <K extends keyof Omit<BFLAIImageConfig, 'width' | 'height'>>(
+    key: K, 
+    value: Omit<BFLAIImageConfig, 'width' | 'height'>[K]
+  ) => {
+    setEditableSettings(prev => ({ 
+      ...prev, 
+      bfl_ai: { 
+        ...prev.bfl_ai, 
+        [key]: value 
+      } 
+    }));
   };
 
   const handleSave = () => {
@@ -53,6 +71,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
   };
 
   if (!isOpen) return null;
+
+  const currentBflResolutionValue = `${editableSettings.bfl_ai.width}x${editableSettings.bfl_ai.height}`;
 
   return (
     <div
@@ -111,76 +131,29 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
             </div>
           </section>
 
-          {/* OpenAI Settings */}
-          <section className="space-y-4 p-4 border border-gray-200 rounded-lg">
-            <h3 className="text-lg font-medium text-gray-700">OpenAI (gpt-image-1) 預設值</h3>
-            <p className="text-xs text-gray-500 -mt-2">注意：「gpt-image-1」為目前程式碼中使用的模型名稱。下列選項基於標準 DALL-E 模型功能。</p>
-            <div>
-              <label htmlFor="openaiSize" className="block text-sm font-medium text-gray-600 mb-1">圖像尺寸 (Size)</label>
-              <select
-                id="openaiSize"
-                value={editableSettings.openai.size}
-                onChange={(e) => handleOpenAIChange('size', e.target.value as OpenAISize)}
-                className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-gray-500 focus:border-gray-500 text-sm bg-white text-black"
-              >
-                {OPENAI_SIZES.map(size => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="openaiQuality" className="block text-sm font-medium text-gray-600 mb-1">品質 (Quality)</label>
-              <select
-                id="openaiQuality"
-                value={editableSettings.openai.quality}
-                onChange={(e) => handleOpenAIChange('quality', e.target.value as OpenAIQuality)}
-                className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-gray-500 focus:border-gray-500 text-sm bg-white text-black"
-              >
-                {OPENAI_QUALITIES.map(quality => (
-                  <option key={quality} value={quality}>{quality.charAt(0).toUpperCase() + quality.slice(1)}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="openaiStyle" className="block text-sm font-medium text-gray-600 mb-1">風格 (Style)</label>
-              <select
-                id="openaiStyle"
-                value={editableSettings.openai.style}
-                onChange={(e) => handleOpenAIChange('style', e.target.value as OpenAIStyle)}
-                className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-gray-500 focus:border-gray-500 text-sm bg-white text-black"
-              >
-                {OPENAI_STYLES.map(style => (
-                  <option key={style} value={style}>{style.charAt(0).toUpperCase() + style.slice(1)}</option>
-                ))}
-              </select>
-            </div>
-          </section>
-
           {/* BFL.ai Settings */}
           <section className="space-y-4 p-4 border border-gray-200 rounded-lg">
             <h3 className="text-lg font-medium text-gray-700">BFL.ai (Flux Pro 1.1) 預設值</h3>
             <div>
-              <label htmlFor="bflWidth" className="block text-sm font-medium text-gray-600 mb-1">寬度 (Width)</label>
-              <input
-                type="number"
-                id="bflWidth"
-                value={editableSettings.bfl_ai.width}
-                onChange={(e) => handleBFLAIChange('width', parseInt(e.target.value, 10))}
+              <label htmlFor="bflResolution" className="block text-sm font-medium text-gray-600 mb-1">解析度 (Resolution)</label>
+              <select
+                id="bflResolution"
+                value={currentBflResolutionValue}
+                onChange={(e) => handleBFLAIResolutionChange(e.target.value)}
                 className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-gray-500 focus:border-gray-500 text-sm bg-white text-black"
-                placeholder="e.g., 1024"
-              />
+              >
+                {BFL_AI_RESOLUTION_OPTIONS.map(opt => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+                {!BFL_AI_RESOLUTION_OPTIONS.find(opt => opt.value === currentBflResolutionValue) && (
+                  <option key="custom" value={currentBflResolutionValue}>
+                    自訂 ({editableSettings.bfl_ai.width}x{editableSettings.bfl_ai.height})
+                  </option>
+                )}
+              </select>
+               <p className="text-xs text-gray-500 mt-1">解析度必須是 32 的倍數，且範圍在 256 至 1440 之間。</p>
             </div>
-            <div>
-              <label htmlFor="bflHeight" className="block text-sm font-medium text-gray-600 mb-1">高度 (Height)</label>
-              <input
-                type="number"
-                id="bflHeight"
-                value={editableSettings.bfl_ai.height}
-                onChange={(e) => handleBFLAIChange('height', parseInt(e.target.value, 10))}
-                className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-gray-500 focus:border-gray-500 text-sm bg-white text-black"
-                placeholder="e.g., 768"
-              />
-            </div>
+            
             <div>
               <label htmlFor="bflSeed" className="block text-sm font-medium text-gray-600 mb-1">種子 (Seed)</label>
               <input
@@ -199,11 +172,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 id="bflSafetyTolerance"
                 value={editableSettings.bfl_ai.safety_tolerance}
                 onChange={(e) => handleBFLAIChange('safety_tolerance', parseInt(e.target.value, 10))}
-                min="0" // Assuming a range, adjust if API has specific values
-                max="4" // Assuming a range
+                min="0"
+                max="6" 
                 className="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-gray-500 focus:border-gray-500 text-sm bg-white text-black"
-                placeholder="e.g., 2 (0-4)"
+                placeholder="e.g., 2 (0-6)"
               />
+              <p className="text-xs text-gray-500 mt-1">輸入和輸出審核的容忍度。介於 0 到 6 之間，0 表示最嚴格，6 表示最不嚴格。</p>
             </div>
             <div className="flex items-center">
               <input

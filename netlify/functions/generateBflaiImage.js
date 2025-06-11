@@ -1,5 +1,5 @@
 // 引入 node-fetch 套件，用於發送 HTTP 請求
-import fetch from 'node-fetch';
+const fetch = require('node-fetch');
 
 export async function handler(event, context) {
   if (event.httpMethod !== 'POST') {

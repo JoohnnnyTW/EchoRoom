@@ -13,8 +13,8 @@ const envConfigContent = `
 window.process = window.process || {};
 window.process.env = window.process.env || {};
 Object.assign(window.process.env, {
-  API_KEY: '${process.env.AIzaSyCvi2YGo0yQZ0UMGxqnoj5iL_KA9t8gbKI|| ""}',
-  BFL_API_KEY: '${process.env.cdde8074-20c5-4ba5-bf4d-6518e422d2c2 || ""}'
+  API_KEY: '${process.env.APP_GEMINI_API_KEY || ""}',
+  BFL_API_KEY: '${process.env.APP_BFL_API_KEY || ""}'
 });
 console.log('env-config.js created by Netlify build: API keys configured. Gemini key found: ${!!process.env.APP_GEMINI_API_KEY}, BFL.ai key found: ${!!process.env.APP_BFL_API_KEY}');
 `;

@@ -7,6 +7,9 @@
     "build:copy": "mkdir -p dist && cp index.html dist/index.html && cp env-config.js dist/env-config.js",
     "build": "node create-env-config.js && npm run build:js && npm run build:copy"
   },
+  "dependencies": {
+    "@google/genai": "^0.15.0"
+  },
   "devDependencies": {
     "esbuild": "^0.20.0"
   }

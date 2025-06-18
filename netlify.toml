@@ -1,10 +1,12 @@
 [build]
-  command = "node ./create-env-config.js && echo 'env-config.js created. Static site build complete.'"
-  publish = "." # 您的靜態檔案 (index.html 等) 在根目錄
+  command = "npm run build"
+  publish = "dist/"
 
 [functions]
-  node_bundler = "esbuild"
-  directory = "netlify/functions"
-  # 如果您的 function 檔案內部使用了 import/export (ESM 語法)
-  # 並且您的 Node.js 版本或 Netlify 設定需要明確指定 bundler，可以嘗試解除下面這行的註解
-  # node_bundler = "esbuild"
+  directory = "netlify/functions/"
+  node_bundler = "esbuild" # Ensures esbuild is used for bundling Netlify functions
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

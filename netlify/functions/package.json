@@ -1,0 +1,9 @@
+{
+  "name": "echoroom-netlify-functions",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "node-fetch": "^2.6.7",
+    "@google/genai": "^0.15.0" 
+  }
+}

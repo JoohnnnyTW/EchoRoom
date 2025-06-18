@@ -1,36 +1,20 @@
 
 import React from 'react';
-import { AISuggestedTerm, PromptTerm, SelectedPromptTerm } from '../types';
-import { PlusCircleIcon, MinusCircleIcon, XCircleIcon, ArrowPathIcon, CheckCircleIcon, ExclamationTriangleIcon, SparklesIcon } from './Icons';
+import { AISuggestionItem, SubjectPhraseSuggestionsModalProps as Props } from '../types';
+import { XCircleIcon, CheckCircleIcon, SparklesIcon, ExclamationTriangleIcon, ArrowPathIcon } from './Icons';
 import { LoadingSpinner } from './LoadingSpinner';
-import { IconButton } from './IconButton';
 
-interface AISuggestionsModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-  suggestions: AISuggestedTerm[];
-  onAddTerm: (term: PromptTerm) => void;
-  activeTerms: Map<string, SelectedPromptTerm>;
-  onRegenerate: () => void;
-  isLoadingSuggestions: boolean;
-  title: string;
-  thinkingProcessMessages: string[];
-  currentThinkingMessageIndex: number;
-  error: string | null;
-}
-
-export const AISuggestionsModal: React.FC<AISuggestionsModalProps> = ({
+export const SubjectPhraseSuggestionsModal: React.FC<Props> = ({
   isOpen,
   onClose,
   suggestions,
-  onAddTerm,
-  activeTerms,
-  onRegenerate,
+  onApplySuggestion,
   isLoadingSuggestions,
   title,
   thinkingProcessMessages,
   currentThinkingMessageIndex,
   error,
+  onRegenerate,
 }) => {
   if (!isOpen) return null;
 
@@ -45,20 +29,24 @@ export const AISuggestionsModal: React.FC<AISuggestionsModalProps> = ({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-labelledby="ai-suggestions-title"
+      aria-labelledby="subject-phrase-suggestions-title"
     >
       <div
         className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-lg max-h-[85vh] flex flex-col transform transition-all duration-300 ease-in-out scale-100 opacity-100"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-4">
-          <h2 id="ai-suggestions-title" className="text-xl font-semibold text-gray-800 flex items-center">
+          <h2 id="subject-phrase-suggestions-title" className="text-xl font-semibold text-gray-800 flex items-center">
             <SparklesIcon className="w-6 h-6 mr-2 text-black" />
             {title}
           </h2>
-          <IconButton onClick={onClose} aria-label="關閉建議" className="text-gray-400 hover:text-gray-600">
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+            aria-label="關閉建議"
+          >
             <XCircleIcon className="w-7 h-7" />
-          </IconButton>
+          </button>
         </div>
 
         {showThinkingProcess && (
@@ -83,9 +71,9 @@ export const AISuggestionsModal: React.FC<AISuggestionsModalProps> = ({
         )}
 
         {showGenericLoader && (
-           <div className="flex flex-col items-center justify-center py-8 text-gray-600 min-h-[200px]">
+          <div className="flex flex-col items-center justify-center py-8 text-gray-600 min-h-[200px]">
             <LoadingSpinner className="w-10 h-10 mb-3" />
-            <p>AI 正在思考關鍵詞建議...</p>
+            <p>AI 正在思考主體內容建議...</p>
           </div>
         )}
         
@@ -100,35 +88,26 @@ export const AISuggestionsModal: React.FC<AISuggestionsModalProps> = ({
         )}
 
         {showNoSuggestionsMessage && (
-          <p className="text-gray-600 text-center py-8 min-h-[150px]">AI 未能提供建議。請調整風格或稍後重試。</p>
+          <p className="text-gray-600 text-center py-8 min-h-[150px]">AI 未能提供主體內容建議。請調整參考文字或稍後重試。</p>
         )}
 
         {!isLoadingSuggestions && !error && suggestions.length > 0 && (
-          <div className="space-y-2 overflow-y-auto apple-scroll pr-2 mb-4 max-h-[calc(85vh-220px)] min-h-[150px]">
-            <p className="text-sm text-gray-600 mb-1.5">點擊下方任一建議，以新增或移除該詞語：</p>
-            {suggestions.map((term) => {
-              const isSelected = activeTerms.has(term.id);
-              return (
-                <button
-                  key={term.id}
-                  onClick={() => onAddTerm(term)}
-                  className={`w-full text-left p-2.5 rounded-lg border cursor-pointer transition-colors flex items-center justify-between
-                              ${isSelected ? 'bg-gray-200 border-gray-400 ring-1 ring-gray-500' : 'bg-gray-50 hover:bg-gray-100 border-gray-200'}`}
-                  aria-pressed={isSelected}
-                >
-                  <div>
-                    <p className={`font-medium text-sm ${isSelected ? 'text-gray-800' : 'text-gray-700'}`}>{term.termEn}</p>
-                    <p className={`text-xs ${isSelected ? 'text-gray-600' : 'text-gray-500'}`}>{term.termZh}</p>
-                  </div>
-                  <div className={`p-1 rounded-full transition-colors ${isSelected ? 'text-black' : 'text-gray-500'}`}>
-                    {isSelected ? <MinusCircleIcon className="w-5 h-5" /> : <PlusCircleIcon className="w-5 h-5 opacity-70" />}
-                  </div>
-                </button>
-              );
-            })}
+          <div className="space-y-3 overflow-y-auto apple-scroll pr-2 mb-4 max-h-[calc(85vh-220px)] min-h-[150px]">
+            <p className="text-sm text-gray-600 mb-2">點擊下方任一建議，以將其套用至主要描述欄位：</p>
+            {suggestions.map((item, index) => (
+              <button
+                key={index}
+                onClick={() => onApplySuggestion(item)}
+                className="w-full text-left p-3 rounded-lg border bg-gray-50 hover:bg-gray-100 border-gray-200 cursor-pointer transition-colors focus:outline-none focus:ring-2 focus:ring-black"
+                aria-label={`套用建議: ${item.suggestionEn}`}
+              >
+                <p className="font-medium text-gray-700 text-sm"><strong>En:</strong> {item.suggestionEn}</p>
+                <p className="text-xs text-gray-500 mt-0.5"><strong>Zh:</strong> {item.suggestionZh}</p>
+              </button>
+            ))}
           </div>
         )}
-        
+
         <div className="mt-auto pt-4 border-t border-gray-200 flex justify-between items-center">
           <button
             onClick={onRegenerate}

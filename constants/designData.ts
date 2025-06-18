@@ -1,6 +1,8 @@
-import { DesignStyle, PromptCategory, PromptTerm } from '../types'; // Updated InitialPromptTerm to PromptTerm
 
-export const ROOM_TYPES: PromptTerm[] = [ // Updated to PromptTerm
+import { DesignStyle, PromptTerm, DynamicDetailSet } from '../types'; 
+import { ensureThreeTerms } from '../utils/arrayUtils'; // Import shared utility
+
+export const ROOM_TYPES: PromptTerm[] = [ 
   { id: 'room_living', termEn: 'living room', termZh: '客廳' },
   { id: 'room_bedroom', termEn: 'bedroom', termZh: '臥室' },
   { id: 'room_kitchen', termEn: 'kitchen', termZh: '廚房' },
@@ -11,7 +13,7 @@ export const ROOM_TYPES: PromptTerm[] = [ // Updated to PromptTerm
   { id: 'room_entryway', termEn: 'entryway', termZh: '玄關' },
 ];
 
-export const FURNITURE_TERMS: PromptTerm[] = [ // Updated to PromptTerm
+export const FURNITURE_TERMS: PromptTerm[] = [ 
   { id: 'furn_sofa_sectional', termEn: 'sectional sofa', termZh: '模組沙發' },
   { id: 'furn_sofa_chesterfield', termEn: 'chesterfield sofa', termZh: '徹斯特菲爾德沙發' },
   { id: 'furn_armchair_accent', termEn: 'accent armchair', termZh: '特色扶手椅' },
@@ -34,7 +36,16 @@ export const FURNITURE_TERMS: PromptTerm[] = [ // Updated to PromptTerm
   { id: 'furn_bar_stools', termEn: 'bar stools', termZh: '吧台凳' },
 ];
 
-export const PROMPT_CATEGORIES: PromptCategory[] = [
+// Local interface for the structure of items in PROMPT_CATEGORIES
+export interface PromptCategoryDefinition {
+  id: string;
+  nameEn: string;
+  nameZh: string;
+  isOpen: boolean; // Corresponds to CustomPromptCategorySetting.isOpenDefault
+  terms: PromptTerm[];
+}
+
+export const PROMPT_CATEGORIES: PromptCategoryDefinition[] = [
   {
     id: 'materials',
     nameEn: 'Materials',
@@ -176,10 +187,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '現代風格',
     descriptionEn: 'Characterized by simplicity, clean lines, and a neutral color palette. Often incorporates materials like metal, glass, and steel.',
     descriptionZh: '以簡約、俐落的線條和中性色調為特點。通常融合金屬、玻璃和鋼材等材質。',
-    furnitureBrandsEn: ['Herman Miller', 'Knoll', 'BoConcept'],
-    furnitureBrandsZh: ['赫曼米勒', '諾爾', '北歐風情'],
-    decorTipsEn: ['Focus on functionality.', 'Use monochromatic colors with accent pieces.', 'Declutter and maintain open spaces.'],
-    decorTipsZh: ['注重功能性。', '使用單色系搭配重點飾品。', '保持空間整潔開闊。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Herman Miller', 'Knoll', 'BoConcept']), 
+            termsZh: ensureThreeTerms(['赫曼米勒', '諾爾', '北歐風情']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Focus on functionality.', 'Use monochromatic colors with accent pieces.', 'Declutter and maintain open spaces.']), 
+            termsZh: ensureThreeTerms(['注重功能性。', '使用單色系搭配重點飾品。', '保持空間整潔開闊。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Modern style',
     basePromptZh: '現代風格',
     relatedCategories: ['materials', 'furniture', 'cabinetry', 'lighting', 'photography', 'details_decor', 'render_style', 'human_presence'],
@@ -190,10 +211,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '極簡風格',
     descriptionEn: 'Takes modern design principles further with an emphasis on extreme simplicity and "less is more". Every element serves a purpose.',
     descriptionZh: '將現代設計原則進一步昇華，強調極致簡約和「少即是多」。每個元素都有其特定用途。',
-    furnitureBrandsEn: ['MUJI', 'Minimalissimo', 'Design Within Reach (select items)'],
-    furnitureBrandsZh: ['無印良品', 'Minimalissimo', 'Design Within Reach (部分選品)'],
-    decorTipsEn: ['Strictly neutral color palettes.', 'Focus on form, color, and texture of essential items.', 'Eliminate all non-essential clutter.'],
-    decorTipsZh: ['嚴格的中性色調。', '專注於必需品的形式、色彩和紋理。', '清除所有不必要的雜物。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['MUJI', 'Minimalissimo', 'Design Within Reach (select items)']), 
+            termsZh: ensureThreeTerms(['無印良品', 'Minimalissimo', 'Design Within Reach (部分選品)']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Strictly neutral color palettes.', 'Focus on form, color, and texture of essential items.', 'Eliminate all non-essential clutter.']), 
+            termsZh: ensureThreeTerms(['嚴格的中性色調。', '專注於必需品的形式、色彩和紋理。', '清除所有不必要的雜物。'])
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Minimalist style',
     basePromptZh: '極簡風格',
     relatedCategories: ['materials', 'furniture', 'cabinetry', 'lighting', 'photography', 'render_style'],
@@ -204,10 +235,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '斯堪地那維亞風格 (北歐風)',
     descriptionEn: 'Combines beauty, simplicity, and functionality. Features light colors, natural materials like wood, and cozy textiles.',
     descriptionZh: '結合了美觀、簡約和功能性。特色是淺色調、木材等天然材質以及舒適的紡織品。',
-    furnitureBrandsEn: ['IKEA', 'HAY', 'Normann Copenhagen', 'Menu'],
-    furnitureBrandsZh: ['宜家', 'HAY', '諾曼哥本哈根', 'Menu'],
-    decorTipsEn: ['Use white and light wood extensively.', 'Incorporate hygge elements (coziness).', 'Maximize natural light.'],
-    decorTipsZh: ['廣泛使用白色和淺色木材。', '融入「Hygge」元素（舒適感）。', '最大化自然採光。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['IKEA', 'HAY', 'Normann Copenhagen']), 
+            termsZh: ensureThreeTerms(['宜家', 'HAY', '諾曼哥本哈根'])
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Use white and light wood extensively.', 'Incorporate hygge elements (coziness).', 'Maximize natural light.']), 
+            termsZh: ensureThreeTerms(['廣泛使用白色和淺色木材。', '融入「Hygge」元素（舒適感）。', '最大化自然採光。'])
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Scandinavian style',
     basePromptZh: '北歐風格',
     relatedCategories: ['materials', 'furniture', 'lighting', 'photography', 'human_presence', 'details_decor', 'render_style'],
@@ -218,10 +259,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '工業風格',
     descriptionEn: 'Draws inspiration from warehouses and urban lofts. Common elements include exposed brick, ductwork, wood, and metal.',
     descriptionZh: '從倉庫和都市閣樓中汲取靈感。常見元素包括裸露的磚牆、管線、木材和金屬。',
-    furnitureBrandsEn: ['Restoration Hardware', 'West Elm (some collections)', 'CB2 (some collections)'],
-    furnitureBrandsZh: ['Restoration Hardware', '西榆 (部分系列)', 'CB2 (部分系列)'],
-    decorTipsEn: ['Embrace raw, unfinished textures.', 'Use a mix of wood and metal.', 'Incorporate vintage or salvaged items.'],
-    decorTipsZh: ['擁抱原始、未完成的紋理。', '混合使用木材和金屬。', '融入復古或回收物件。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Restoration Hardware', 'West Elm (some collections)', 'CB2 (some collections)']), 
+            termsZh: ensureThreeTerms(['Restoration Hardware', '西榆 (部分系列)', 'CB2 (部分系列)']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Embrace raw, unfinished textures.', 'Use a mix of wood and metal.', 'Incorporate vintage or salvaged items.']), 
+            termsZh: ensureThreeTerms(['擁抱原始、未完成的紋理。', '混合使用木材和金屬。', '融入復古或回收物件。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Industrial style',
     basePromptZh: '工業風格',
     relatedCategories: ['materials', 'furniture', 'cabinetry', 'lighting', 'photography', 'render_style'],
@@ -232,10 +283,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '波希米亞風格',
     descriptionEn: 'A carefree, eclectic style with a focus on vibrant colors, patterns, and textures from around the world. Encourages mixing and matching.',
     descriptionZh: '一種自由奔放、不拘一格的風格，著重來自世界各地的鮮豔色彩、圖案和紋理。鼓勵混搭。',
-    furnitureBrandsEn: ['Anthropologie', 'Urban Outfitters Home', 'Justina Blakeney Home'],
-    furnitureBrandsZh: ['Anthropologie', 'Urban Outfitters Home', 'Justina Blakeney Home'],
-    decorTipsEn: ['Layer textiles: rugs, pillows, throws.', 'Mix patterns and colors boldly.', 'Incorporate plants and natural elements generously.'],
-    decorTipsZh: ['層疊紡織品：地毯、抱枕、蓋毯。', '大膽混合圖案和色彩。', '大量融入植物和自然元素。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Anthropologie', 'Urban Outfitters Home', 'Justina Blakeney Home']), 
+            termsZh: ensureThreeTerms(['Anthropologie', 'Urban Outfitters Home', 'Justina Blakeney Home']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Layer textiles: rugs, pillows, throws.', 'Mix patterns and colors boldly.', 'Incorporate plants and natural elements generously.']), 
+            termsZh: ensureThreeTerms(['層疊紡織品：地毯、抱枕、蓋毯。', '大膽混合圖案和色彩。', '大量融入植物和自然元素。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Bohemian style',
     basePromptZh: '波希米亞風格',
     relatedCategories: ['materials', 'furniture', 'lighting', 'photography', 'human_presence', 'details_decor', 'render_style'],
@@ -246,10 +307,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '日式侘寂風 (Wabi-Sabi)', 
     descriptionEn: 'A hybrid of Japanese minimalism and Scandinavian functionality. Focuses on clean lines, neutral tones, natural materials, and craftsmanship, embracing the beauty of imperfection.',
     descriptionZh: '日本極簡主義與斯堪地那維亞功能性的混合體。著重簡潔線條、中性色調、天然材質和工藝，擁抱不完美之美。',
-    furnitureBrandsEn: ['Karimoku Case Study', 'Ariake Collection', 'Ouur by Kinfolk'],
-    furnitureBrandsZh: ['Karimoku Case Study', 'Ariake Collection', 'Ouur by Kinfolk'],
-    decorTipsEn: ['Emphasize craftsmanship and quality materials.', 'Maintain a clutter-free environment.', 'Use a palette of muted earthy tones and soft neutrals.', 'Value asymmetry and simplicity.'],
-    decorTipsZh: ['強調工藝和優質材料。', '保持環境整潔。', '使用柔和的大地色調和中性色。', '重視不對稱與簡約。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Karimoku Case Study', 'Ariake Collection', 'Ouur by Kinfolk']), 
+            termsZh: ensureThreeTerms(['Karimoku Case Study', 'Ariake Collection', 'Ouur by Kinfolk']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Emphasize craftsmanship and quality materials.', 'Maintain a clutter-free environment.', 'Use a palette of muted earthy tones and soft neutrals.']), 
+            termsZh: ensureThreeTerms(['強調工藝和優質材料。', '保持環境整潔。', '使用柔和的大地色調和中性色。'])
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Japandi style, wabi-sabi influence',
     basePromptZh: '日式侘寂風格',
     relatedCategories: ['materials', 'furniture', 'cabinetry', 'lighting', 'photography', 'details_decor', 'render_style'],
@@ -260,10 +331,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '海岸風格',
     descriptionEn: 'Light, airy, and reminiscent of the beach. Features cool neutral shades, blues, whites, and natural materials like wood and rattan.',
     descriptionZh: '輕盈、通透，令人聯想到海灘。以冷色調中性色、藍色、白色以及木材和藤編等天然材質為特色。',
-    furnitureBrandsEn: ['Serena & Lily', 'Pottery Barn (coastal collections)', 'Wayfair (various)'],
-    furnitureBrandsZh: ['Serena & Lily', 'Pottery Barn (海岸系列)', 'Wayfair (眾多品牌)'],
-    decorTipsEn: ['Use light and breezy fabrics.', 'Incorporate nautical or beach-themed decor subtly.', 'Maximize natural light, use sheer curtains.'],
-    decorTipsZh: ['使用輕盈透氣的布料。', '巧妙融入航海或海灘主題裝飾。', '最大化自然光，使用薄紗窗簾。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Serena & Lily', 'Pottery Barn (coastal collections)', 'Wayfair (various)']), 
+            termsZh: ensureThreeTerms(['Serena & Lily', 'Pottery Barn (海岸系列)', 'Wayfair (眾多品牌)']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Use light and breezy fabrics.', 'Incorporate nautical or beach-themed decor subtly.', 'Maximize natural light, use sheer curtains.']), 
+            termsZh: ensureThreeTerms(['使用輕盈透氣的布料。', '巧妙融入航海或海灘主題裝飾。', '最大化自然光，使用薄紗窗簾。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Coastal style',
     basePromptZh: '海岸風格',
     relatedCategories: ['materials', 'furniture', 'lighting', 'photography', 'human_presence', 'details_decor', 'render_style'],
@@ -274,10 +355,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '農舍風格',
     descriptionEn: 'Warm, cozy, and rustic with a touch of modern sensibility. Features reclaimed wood, vintage accessories, and comfortable furniture.',
     descriptionZh: '溫馨、舒適且帶有質朴感，並融入現代氣息。以回收木材、復古飾品和舒適的家具為特色。',
-    furnitureBrandsEn: ['Magnolia Home', 'Birch Lane', 'Antique Farmhouse'],
-    furnitureBrandsZh: ['Magnolia Home', 'Birch Lane', 'Antique Farmhouse'],
-    decorTipsEn: ['Mix old and new elements.', 'Use a neutral palette with warm wood tones.', 'Incorporate shiplap walls or barn doors.'],
-    decorTipsZh: ['混合新舊元素。', '使用中性色調搭配溫暖的木質色調。', '融入企口板牆或穀倉門。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Magnolia Home', 'Birch Lane', 'Antique Farmhouse']), 
+            termsZh: ensureThreeTerms(['Magnolia Home', 'Birch Lane', 'Antique Farmhouse']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Mix old and new elements.', 'Use a neutral palette with warm wood tones.', 'Incorporate shiplap walls or barn doors.']), 
+            termsZh: ensureThreeTerms(['混合新舊元素。', '使用中性色調搭配溫暖的木質色調。', '融入企口板牆或穀倉門。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Farmhouse style',
     basePromptZh: '農舍風格',
     relatedCategories: ['materials', 'furniture', 'cabinetry', 'lighting', 'photography', 'human_presence', 'details_decor', 'render_style'],
@@ -288,10 +379,20 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '中古世紀現代風格',
     descriptionEn: 'Revisits the iconic style of the mid-20th century (roughly 1933-1965). Features organic and geometric forms, clean lines, and a connection to nature.',
     descriptionZh: '重現20世紀中期（約1933-1965年）的標誌性風格。以有機和幾何形式、簡潔線條以及與自然的連結為特色。',
-    furnitureBrandsEn: ['Herman Miller (vintage)', 'Knoll (vintage)', 'West Elm (retro collections)', 'Article'],
-    furnitureBrandsZh: ['赫曼米勒 (古董)', '諾爾 (古董)', '西榆 (復古系列)', 'Article'],
-    decorTipsEn: ['Iconic furniture pieces are key.', 'Wood, particularly teak, is prevalent.', 'Use bold accent colors and graphic patterns.'],
-    decorTipsZh: ['標誌性的家具是關鍵。', '木材，尤其是柚木，非常普遍。', '使用大膽的強調色和圖形圖案。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Herman Miller (vintage)', 'Knoll (vintage)', 'Article']), 
+            termsZh: ensureThreeTerms(['赫曼米勒 (古董)', '諾爾 (古董)', 'Article'])
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Iconic furniture pieces are key.', 'Wood, particularly teak, is prevalent.', 'Use bold accent colors and graphic patterns.']), 
+            termsZh: ensureThreeTerms(['標誌性的家具是關鍵。', '木材，尤其是柚木，非常普遍。', '使用大膽的強調色和圖形圖案。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Mid-Century Modern style',
     basePromptZh: '中古世紀現代風格',
     relatedCategories: ['materials', 'furniture', 'lighting', 'photography', 'details_decor', 'render_style'],
@@ -302,12 +403,22 @@ export const DESIGN_STYLES: DesignStyle[] = [
     nameZh: '裝飾藝術風格',
     descriptionEn: 'Originating in the 1920s and 1930s, characterized by rich ornamentation, geometric patterns, symmetry, and luxurious materials like metallics and exotic woods.',
     descriptionZh: '起源於1920和1930年代，以豐富的裝飾、幾何圖案、對稱性以及金屬和異國木材等奢華材料為特點。',
-    furnitureBrandsEn: ['Look for antiques or reproductions', 'Jonathan Adler (Deco-inspired)', 'Koket'],
-    furnitureBrandsZh: ['尋找古董或複製品', 'Jonathan Adler (裝飾藝術風格靈感)', 'Koket'],
-    decorTipsEn: ['Bold geometric shapes (chevrons, sunbursts).', 'Luxurious materials: chrome, brass, lacquer, velvet.', 'Symmetrical arrangements and opulent details.'],
-    decorTipsZh: ['大膽的幾何形狀（V形圖案、放射狀圖案）。', '奢華材料：鉻、黃銅、亮漆、天鵝絨。', '對稱佈置和華麗細節。'],
+    dynamicDetails: [
+        { 
+            labelEn: "Suggested Furniture/Brands", 
+            labelZh: "建議家具/品牌", 
+            termsEn: ensureThreeTerms(['Jonathan Adler (Deco-inspired)', 'Koket', 'Antiques or Reproductions']), 
+            termsZh: ensureThreeTerms(['Jonathan Adler (裝飾藝術風格靈感)', 'Koket', '古董或複製品']) 
+        },
+        { 
+            labelEn: "Decor Tips", 
+            labelZh: "佈置技巧", 
+            termsEn: ensureThreeTerms(['Bold geometric shapes (chevrons, sunbursts).', 'Luxurious materials: chrome, brass, lacquer, velvet.', 'Symmetrical arrangements and opulent details.']), 
+            termsZh: ensureThreeTerms(['大膽的幾何形狀（V形圖案、放射狀圖案）。', '奢華材料：鉻、黃銅、亮漆、天鵝絨。', '對稱佈置和華麗細節。']) 
+        }
+    ] as [DynamicDetailSet, DynamicDetailSet],
     basePromptEn: 'Art Deco style',
     basePromptZh: '裝飾藝術風格',
     relatedCategories: ['materials', 'furniture', 'lighting', 'photography', 'details_decor', 'render_style'],
   }
-].map(style => ({...style, isCustom: false})); // Ensure isCustom is set for predefined styles
+].map(style => ({...style, isCustom: false}));

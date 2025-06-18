@@ -6,12 +6,32 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EchoRoom</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Amagro&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --font-heading: 'Amagro', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      --font-body: 'Noto Sans TC', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+    }
+
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+      font-family: var(--font-body);
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
     }
+
+    h1, h2, h3, h4, h5, h6,
+    .font-heading-custom { /* Apply this class where heading font is needed if semantic tags aren't enough */
+      font-family: var(--font-heading);
+    }
+
+    /* Tailwind's default font-sans will now effectively use Noto Sans TC as its first choice from the body's font-family.
+       If more specific overrides are needed due to Tailwind classes, those would be additional.
+       For example, if a component explicitly uses Tailwind's `font-mono` or a different pre-defined font stack.
+       However, for general text and titles styled with font-weight/size utilities, this should take effect.
+    */
+
     .apple-scroll::-webkit-scrollbar {
       width: 8px;
       height: 8px;
@@ -31,7 +51,10 @@
     "react-dom/": "https://esm.sh/react-dom@^19.1.0/",
     "react/": "https://esm.sh/react@^19.1.0/",
     "react/jsx-runtime": "https://esm.sh/react@^19.1.0/jsx-runtime",
-    "@google/genai": "https://esm.sh/@google/genai@^1.4.0"
+    "@google/genai": "https://esm.sh/@google/genai@0.15.0",
+    "zod": "https://esm.sh/zod@^3.23.0",
+    "framer-motion": "https://esm.sh/framer-motion@^12.18.0",
+    "react-dropzone": "https://esm.sh/react-dropzone@^14.3.8"
   }
 }
 </script>
@@ -41,6 +64,7 @@
   <div id="root"></div>
   <script src="./env-config.js"></script> 
   <script type="module" src="https://esm.sh/gh/JoohnnnyTW/EchoRoom@main/index.tsx"></script>
+  <script type="module" src="./index.tsx"></script>
 <script type="module" src="/index.tsx"></script>
 </body>
 </html>

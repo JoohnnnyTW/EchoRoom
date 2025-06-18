@@ -1,52 +1,77 @@
 
-import React from 'react';
-import { GeneratedImage, ImageHistoryEntry } from '../types';
-import { XCircleIcon, ChevronLeftIcon, ChevronRightIcon } from './Icons'; // Added ChevronLeftIcon and ChevronRightIcon
+import React, { useEffect } from 'react';
+import { AppGeneratedImage, ImageHistoryEntry } from '../types'; // Updated GeneratedImage to AppGeneratedImage
+import { XCircleIcon, ChevronLeftIcon, ChevronRightIcon } from './Icons';
 import { IconButton } from './IconButton';
 
 interface ImageDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
-  image: GeneratedImage | ImageHistoryEntry | null; // Can be either type now
+  image: AppGeneratedImage | ImageHistoryEntry | null; // Updated GeneratedImage to AppGeneratedImage
   currentIndex: number | null;
   totalImages: number;
   onNavigate: (direction: 'prev' | 'next') => void;
+  title: string;
 }
 
-export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({ 
-    isOpen, 
-    onClose, 
-    image, 
-    currentIndex, 
-    totalImages, 
-    onNavigate 
+export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
+    isOpen,
+    onClose,
+    image,
+    currentIndex,
+    totalImages,
+    onNavigate,
+    title
 }) => {
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (currentIndex === null || totalImages <= 1) return;
+
+      if (event.key === 'ArrowLeft') {
+        if (currentIndex > 0) {
+          onNavigate('prev');
+        }
+      } else if (event.key === 'ArrowRight') {
+        if (currentIndex < totalImages - 1) {
+          onNavigate('next');
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen, currentIndex, totalImages, onNavigate]);
+
   if (!isOpen || !image) return null;
 
-  const isHistoryContext = currentIndex !== null && totalImages > 0 && 'timestamp' in image;
-  const canNavigatePrev = isHistoryContext && currentIndex > 0;
-  const canNavigateNext = isHistoryContext && currentIndex < totalImages - 1;
-
+  const isNavigationPossible = currentIndex !== null && totalImages > 0;
   const displayPrompt = image.prompt || "無提示詞資訊";
   const displaySrc = image.src;
   const displayId = image.id;
 
+  const canNavigatePrev = isNavigationPossible && currentIndex !== null && currentIndex > 0;
+  const canNavigateNext = isNavigationPossible && currentIndex !== null && currentIndex < totalImages - 1;
+
 
   return (
     <div
-      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-[60] transition-opacity duration-300 ease-in-out"
+      className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-[100] transition-opacity duration-300 ease-in-out"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
       aria-labelledby={`image-detail-title-${displayId}`}
     >
       <div
-        className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-5xl max-h-[90vh] flex flex-col transform transition-all duration-300 ease-in-out relative" // Increased max-w-3xl to max-w-5xl
+        className="bg-white rounded-xl shadow-2xl p-4 w-full max-w-5xl max-h-[90vh] flex flex-col transform transition-all duration-300 ease-in-out relative"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex justify-between items-center mb-3">
           <h2 id={`image-detail-title-${displayId}`} className="text-lg font-semibold text-gray-800 truncate">
-            圖像詳情 {isHistoryContext ? `(${currentIndex + 1} / ${totalImages})` : ''}
+            {title} {isNavigationPossible ? `(${(currentIndex ?? 0) + 1} / ${totalImages})` : ''}
           </h2>
           <button
             onClick={onClose}
@@ -56,15 +81,15 @@ export const ImageDetailModal: React.FC<ImageDetailModalProps> = ({
             <XCircleIcon className="w-7 h-7" />
           </button>
         </div>
-        
+
         <div className="flex-grow overflow-auto apple-scroll relative flex items-center justify-center">
-          <img 
-            src={displaySrc} 
-            alt={`Generated: ${displayPrompt.substring(0, 100)}...`} 
-            className="max-w-full max-h-[calc(85vh-120px)] object-contain rounded-md" // Adjusted max-h for larger image
+          <img
+            src={displaySrc}
+            alt={`Generated: ${displayPrompt.substring(0, 100)}...`}
+            className="max-w-full max-h-[calc(85vh-120px)] object-contain rounded-md"
           />
-          
-          {isHistoryContext && totalImages > 1 && (
+
+          {isNavigationPossible && totalImages > 1 && (
             <>
               <IconButton
                 onClick={() => onNavigate('prev')}

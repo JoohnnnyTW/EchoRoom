@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { XCircleIcon, LanguageIcon } from './Icons';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -8,6 +9,7 @@ interface AddStyleModalProps {
   onAddStyle: (nameEn: string, nameZh: string) => void;
   onTranslateName: (nameZh: string) => Promise<string | null>; 
   geminiApiKeySet: boolean; 
+  title: string; // Added title prop
 }
 
 export const AddStyleModal: React.FC<AddStyleModalProps> = ({ 
@@ -15,7 +17,8 @@ export const AddStyleModal: React.FC<AddStyleModalProps> = ({
   onClose, 
   onAddStyle,
   onTranslateName,
-  geminiApiKeySet
+  geminiApiKeySet,
+  title
 }) => {
   const [nameEn, setNameEn] = useState('');
   const [nameZh, setNameZh] = useState('');
@@ -88,7 +91,7 @@ export const AddStyleModal: React.FC<AddStyleModalProps> = ({
       >
         <div className="flex justify-between items-center mb-6">
           <h2 id="add-style-modal-title" className="text-xl font-semibold text-gray-800">
-            新增自訂設計風格
+            {title}
           </h2>
           <button
             onClick={handleModalClose}

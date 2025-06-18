@@ -1,7 +1,7 @@
 
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App'; // App component (which now includes SettingsProvider)
+import { App } from './App'; // App component (which now includes SettingsProvider)
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

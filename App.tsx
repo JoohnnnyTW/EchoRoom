@@ -1,213 +1,486 @@
 
-import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef, useContext } from 'react';
 import { GoogleGenAI, GenerateContentResponse as GeminiGenerateContentResponse } from "@google/genai";
 import { Header } from './components/Header';
 import { StyleSelector } from './components/StyleSelector';
 import { RoomTypeSelector } from './components/RoomTypeSelector';
-import { PromptCategoryAccordion } from './components/PromptCategoryAccordion';
+import { SubjectInput } from './components/SubjectInput';
+import { ImageAnalyzer } from './components/ImageAnalyzer';
+// PromptCategoryAccordion is now used inside PromptCategoriesModal
 import { PromptBuilder } from './components/PromptBuilder';
-import { ImageGenerator } from './components/ImageGenerator';
 import { AISuggestionsModal } from './components/AISuggestionsModal';
 import { ImageHistoryDisplay } from './components/ImageHistoryDisplay';
 import { ImageDetailModal } from './components/ImageDetailModal';
 import { SettingsModal } from './components/SettingsModal';
 import { AddStyleModal } from './components/AddStyleModal';
-import { AddCustomTermModal } from './components/AddCustomTermModal'; // New
+import { AddRoomTypeModal } from './components/AddRoomTypeModal';
+import { AddCustomTermModal, DESIGN_STYLE_QUICK_ADD_CATEGORY_ID, ROOM_TYPE_QUICK_ADD_CATEGORY_ID } from './components/AddCustomTermModal';
+import { AddCategoryModal } from './components/AddCategoryModal'; 
 import { GenerateStyleDetailsButton } from './components/GenerateStyleDetailsButton';
-import { DesignStyle, PromptCategory, SelectedPromptTerm, PromptTerm, AISuggestedTerm, ImageHistoryEntry, GeneratedImage, PromptStateForHistory, ImageEngine, AIStyleDetails } from './types'; // Updated InitialPromptTerm
-import { DESIGN_STYLES as INITIAL_DESIGN_STYLES, PROMPT_CATEGORIES as INITIAL_PROMPT_CATEGORIES, ROOM_TYPES } from './constants/designData';
-import { ChevronDownIcon, ChevronUpIcon, SparklesIcon, ExclamationTriangleIcon, PlusIcon, ChevronDoubleDownIcon, CubeTransparentIcon } from './components/Icons'; // Added CubeTransparentIcon
+import { FavoritesPage } from './components/FavoritesPage';
+import { MultimodalEditModal } from './components/MultimodalEditModal';
+import { ImageFusionStudioModal } from './components/ImageFusionStudioModal'; 
+import { LoadingScreen } from './components/LoadingScreen';
+import { ConfirmationTutorialPage } from './components/ConfirmationTutorialPage'; 
+import { SubjectPhraseSuggestionsModal } from './components/SubjectPhraseSuggestionsModal'; 
+import { ImageGenerator } from './components/ImageGenerator'; 
+import { AISuggestedCategoryTermsModal } from './components/AISuggestedCategoryTermsModal'; 
+import { FloatingCategoriesButton } from './components/FloatingCategoriesButton';
+import { FloatingAISuggestionsButton } from './components/FloatingAISuggestionsButton';
+import { FloatingScrollToGeneratorButton } from './components/FloatingScrollToGeneratorButton';
+import { PromptCategoriesModal } from './components/PromptCategoriesModal'; 
+import { DesignStyle, PromptTerm, SelectedPromptTerm, AISuggestedTerm, ImageHistoryEntry, AppGeneratedImage, PromptStateForHistory, ImageEngine, AIStyleDetails, CustomPromptCategorySetting, PromptCategoryDisplay, AnalyzedImageKeyword, AddCustomTermModalInitialData, AddCustomTermModalOnSaveData, UITexts, SelectedPromptTermForChip, ImageGenerationSettings, AISystemPrompts, StoredAppSettings, AISetupProgressCallback, AppSettings, CustomPromptCategorySettings, DynamicDetailSet, AISuggestionItem, SettingsContextType } from './types';
+import { ChevronDownIcon, ChevronUpIcon, SparklesIcon, ExclamationTriangleIcon, ChevronDoubleDownIcon, CubeTransparentIcon, LanguageIcon, CheckCircleIcon, PlusCircleIcon as PlusCircleIconForAdd, TrashIcon, XCircleIcon } from './components/Icons'; 
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { IconButton } from './components/IconButton';
-import { SettingsProvider } from './contexts/SettingsContext';
+import { SettingsProvider, SettingsContext, deepMerge, initialAppSettings as contextInitialAppSettings } from './contexts/SettingsContext';
+import { DEFAULT_UI_TEXTS } from './constants/uiTexts';
+import { DEFAULT_CUSTOM_PROMPT_CATEGORY_SETTINGS } from './constants/customPromptCategorySettings';
+import { DEFAULT_AI_SYSTEM_PROMPTS } from './constants/aiPrompts'; 
+import { PROMPT_CATEGORIES, ROOM_TYPES as INITIAL_ROOM_TYPES } from './constants/designData';
+import { ensureThreeTerms } from './utils/arrayUtils';
 
-const USER_STYLES_STORAGE_KEY = 'echoRoomUserStyles';
-const USER_CUSTOM_PROMPT_TERMS_STORAGE_KEY = 'echoRoomUserCustomPromptTerms'; // New
+
+const IMAGE_HISTORY_STORAGE_KEY = 'echoRoomImageHistory_v1';
 
 const parseGeminiJsonResponse = <T,>(responseText: string): T | null => {
   let jsonStr = responseText.trim();
+  
+  // Remove BOM (Byte Order Mark) if present at the very beginning
+  jsonStr = jsonStr.replace(/^\uFEFF/, '');
+
+  // Remove markdown fence if present
   const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
   const match = jsonStr.match(fenceRegex);
   if (match && match[2]) {
     jsonStr = match[2].trim();
+     // Remove BOM again if it was inside the fence
+    jsonStr = jsonStr.replace(/^\uFEFF/, '');
   }
+
+  // Remove Line Separator (U+2028) and Paragraph Separator (U+2029) characters, as they are not valid in JSON strings
+  jsonStr = jsonStr.replace(/[\u2028\u2029]/g, '');
+
+  // Aggressively try to fix common JSON issues from AI
+  // The following global replacements for \n, \r, \t were too broad and could corrupt
+  // valid JSON structural newlines, causing parsing errors at the beginning of the JSON string.
+  // Removed:
+  // jsonStr = jsonStr.replace(/([^\\])\n/g, '$1\\n');
+  // jsonStr = jsonStr.replace(/([^\\])\r/g, '$1\\r');
+  // jsonStr = jsonStr.replace(/([^\\])\t/g, '$1\\t');
+  
+  // 2. Trailing commas (complex to fix reliably with regex for all cases, but try simple ones)
+  jsonStr = jsonStr.replace(/,\s*(\}|\])/g, '$1');
+
+  // 3. Ensure property names are double-quoted if AI forgets
+  // This is very tricky and risky with regex. A more robust parser might be needed if this is common.
+  // For now, we'll rely on the `responseMimeType: "application/json"` and AI's capability.
+
+  // 4. Other minor syntax fixes (some retained from previous versions)
+  jsonStr = jsonStr.replace(/"(,\s*)(isCustom|categoryId)"\s*:/g, '$1"$2":'); 
+  jsonStr = jsonStr.replace(/"([^"]+)""\s*:/g, '"$1":'); 
+  jsonStr = jsonStr.replace(/(^|\s|,|\{|\[)(isCustom|categoryId)"\s*:/g, '$1"$2":'); 
+  jsonStr = jsonStr.replace(/([{,]\s*)(isCustom|categoryId)\s*:/g, '$1"$2":'); 
+  jsonStr = jsonStr.replace(/""(isCustom|categoryId)"\s*:\s*/g, '"$1": '); 
+  jsonStr = jsonStr.replace(/(")\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
+  jsonStr = jsonStr.replace(/(true|false|null)\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
+  jsonStr = jsonStr.replace(/([0-9])\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
+  jsonStr = jsonStr.replace(/(\})\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
+  jsonStr = jsonStr.replace(/(\])\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
+
   try {
     return JSON.parse(jsonStr) as T;
   } catch (e: any) {
-    console.error("未能解析JSON回應:", e, "原始文本:", responseText);
+    console.error("未能解析JSON回應:", e.message, "原始文本:", responseText, "清理後文本 (前500字):", jsonStr.substring(0, 500));
+    // Log more details if possible
+    const positionMatch = e.message.match(/position\s+(\d+)/);
+    if (positionMatch && positionMatch[1]) {
+      const errorPos = parseInt(positionMatch[1], 10);
+      const contextChars = 150;
+      console.error(`錯誤發生位置附近文本 (清理後): ...${jsonStr.substring(Math.max(0, errorPos - contextChars), Math.min(jsonStr.length, errorPos + contextChars))}...`);
+    }
+    alert(`AI 回應解析失敗。請檢查控制台以獲取詳細資訊。\n錯誤: ${e.message}\n部分原始文本: ${responseText.substring(0,200)}...`);
     return null;
   }
 };
 
-const AppContent: React.FC = () => {
-  const [userDesignStyles, setUserDesignStyles] = useState<DesignStyle[]>(() => {
-    try {
-      const storedStyles = localStorage.getItem(USER_STYLES_STORAGE_KEY);
-      if (storedStyles) return JSON.parse(storedStyles);
-    } catch (e) { console.error("Error loading user styles from localStorage:", e); }
-    return INITIAL_DESIGN_STYLES;
-  });
+const fillPromptTemplate = (template: string, values: Record<string, string>): string => {
+  let filledTemplate = template;
+  for (const placeholderKey in values) {
+    if (Object.prototype.hasOwnProperty.call(values, placeholderKey)) {
+        const regex = new RegExp(`{{${placeholderKey}}}`, 'g');
+        filledTemplate = filledTemplate.replace(regex, values[placeholderKey]);
+    }
+  }
+  return filledTemplate;
+};
 
-  const [userCustomTerms, setUserCustomTerms] = useState<PromptTerm[]>(() => { // New state for custom terms
-    try {
-      const storedCustomTerms = localStorage.getItem(USER_CUSTOM_PROMPT_TERMS_STORAGE_KEY);
-      if (storedCustomTerms) return JSON.parse(storedCustomTerms);
-    } catch (e) { console.error("Error loading custom prompt terms from localStorage:", e); }
-    return [];
-  });
+interface AddCustomTermModalConfig {
+  isOpen: boolean;
+  initialData?: AddCustomTermModalInitialData;
+  showCategorySelector: boolean;
+  modalTitleKey: keyof Pick<UITexts, 'addCustomTermModalTitle' | 'addCustomTermModalQuickAddTitle' | 'saveTermToCategoryModalTitle'>;
+}
 
-  const userPromptCategories = useMemo(() => { // Combines initial categories with custom terms
-    const baseCategories = JSON.parse(JSON.stringify(INITIAL_PROMPT_CATEGORIES)) as PromptCategory[];
-    userCustomTerms.forEach(customTerm => {
-      const category = baseCategories.find(cat => cat.id === customTerm.categoryId);
-      if (category) {
-        if (!category.terms.find(t => t.id === customTerm.id)) { // Avoid duplicates
-          category.terms.push(customTerm);
-        }
-      } else {
-        console.warn(`Custom term "${customTerm.termEn}" has unknown categoryId "${customTerm.categoryId}"`);
-      }
-    });
-    return baseCategories;
-  }, [userCustomTerms]);
+const AppContent = () => {
+  const settingsContext = useContext(SettingsContext);
+  if (!settingsContext) throw new Error("AppContent must be used within a SettingsProvider");
+  const {
+    settings,
+    addTermToCategory: contextAddTermToCategory,
+    addMultipleTermsToCategory: contextAddMultipleTermsToCategory, 
+    updateTermDefinition: contextUpdateTermDefinition,
+    deleteTermFromCategory: contextDeleteTermFromCategory, 
+    addDesignStyle: contextAddDesignStyle,
+    updateDesignStyle: contextUpdateDesignStyle,
+    deleteDesignStyle: contextDeleteDesignStyle, 
+    deleteTermFromStyleDetail: contextDeleteTermFromStyleDetail,
+    addRoomType: contextAddRoomType,
+    updateSettings, 
+    updateRoomTypes: contextUpdateRoomTypes,
+    deleteRoomType: contextDeleteRoomType,
+    addPromptCategory: contextAddPromptCategory, 
+    deletePromptCategory: contextDeletePromptCategory, 
+  } = settingsContext;
+  const { aiSystemPrompts, uiTexts, customPromptCategorySettings, designStyles, roomTypes, appContextThemeEn, appContextThemeZh } = settings;
 
-  const [selectedStyle, setSelectedStyle] = useState<DesignStyle | null>(userDesignStyles[0] || null);
-  const [selectedRoomType, setSelectedRoomType] = useState<PromptTerm | null>(ROOM_TYPES[0] || null); // Updated type
+  const processedPromptCategories: PromptCategoryDisplay[] = useMemo(() => {
+    return Object.values(customPromptCategorySettings).map(categorySetting => ({
+      id: categorySetting.id,
+      nameEn: categorySetting.nameEn,
+      nameZh: categorySetting.nameZh,
+      terms: categorySetting.terms.map(term => ({...term, categoryId: categorySetting.id})), 
+      isOpen: categorySetting.isOpenDefault,
+    }));
+  }, [customPromptCategorySettings]);
+
+
+  const [selectedStyle, setSelectedStyle] = useState<DesignStyle | null>(designStyles[0] || null);
+  const [selectedRoomType, setSelectedRoomType] = useState<PromptTerm | null>(roomTypes[0] || null);
+  const [isRoomTypeSelectorEnabled, setIsRoomTypeSelectorEnabled] = useState<boolean>(false);
+  const [subjectInputEn, setSubjectInputEn] = useState<string>('');
+  const [subjectInputZh, setSubjectInputZh] = useState<string>('');
+  const [aiSuggestionSeedText, setAiSuggestionSeedText] = useState<string>(''); 
+  const [isSubjectInputEnabled, setIsSubjectInputEnabled] = useState<boolean>(false);
+
+  const [isImageAnalyzerEnabled, setIsImageAnalyzerEnabled] = useState<boolean>(false);
+  const [lastAnalyzedKeywords, setLastAnalyzedKeywords] = useState<AnalyzedImageKeyword[] | null>(null); 
+  const [analyzedImageForSubjectContext, setAnalyzedImageForSubjectContext] = useState<string | null>(null);
+
+
+  const [isPromptCategoriesEnabled, setIsPromptCategoriesEnabled] = useState<boolean>(true); 
   const [activePromptTerms, setActivePromptTerms] = useState<Map<string, SelectedPromptTerm>>(new Map());
-  const [generatedPromptEn, setGeneratedPromptEn] = useState<string>('');
-  const [generatedPromptZh, setGeneratedPromptZh] = useState<string>('');
-  const [showStyleDetails, setShowStyleDetails] = useState<boolean>(false); 
+  
+  
+  const [autoGeneratedPromptEn, setAutoGeneratedPromptEn] = useState<string>('');
+  const [autoGeneratedPromptZh, setAutoGeneratedPromptZh] = useState<string>('');
+
+  
+  const [manualPromptEn, setManualPromptEn] = useState<string>('');
+  const [isPromptEnManual, setIsPromptEnManual] = useState<boolean>(false);
+  const [manualPromptZh, setManualPromptZh] = useState<string>('');
+  const [isPromptZhManual, setIsPromptZhManual] = useState<boolean>(false);
+
+
+  const [showStyleDetails, setShowStyleDetails] = useState<boolean>(false);
+  const [isPromptBuilderVisible, setIsPromptBuilderVisible] = useState<boolean>(true);
+
+  const [showPromptCategoriesModal, setShowPromptCategoriesModal] = useState<boolean>(false); // Added for new modal
+
 
   const [aiSuggestedTerms, setAiSuggestedTerms] = useState<AISuggestedTerm[]>([]);
   const [isLoadingAiSuggestions, setIsLoadingAiSuggestions] = useState<boolean>(false);
   const [showAiSuggestionsModal, setShowAiSuggestionsModal] = useState<boolean>(false);
   const [aiSuggestionError, setAiSuggestionError] = useState<string | null>(null);
+  const [thinkingProcessMessages, setThinkingProcessMessages] = useState<string[]>([]);
+  const [currentThinkingMessageIndex, setCurrentThinkingMessageIndex] = useState<number>(0);
+  const thinkingIntervalRef = useRef<number | null>(null);
+
+  
+  const [showSubjectPhraseSuggestionsModal, setShowSubjectPhraseSuggestionsModal] = useState<boolean>(false);
+  const [subjectPhraseSuggestions, setSubjectPhraseSuggestions] = useState<AISuggestionItem[]>([]);
+  const [isLoadingSubjectPhraseSuggestions, setIsLoadingSubjectPhraseSuggestions] = useState<boolean>(false);
+  const [subjectPhraseSuggestionError, setSubjectPhraseSuggestionError] = useState<string | null>(null);
+  const [subjectPhraseThinkingMessages, setSubjectPhraseThinkingMessages] = useState<string[]>([]);
+  const [currentSubjectPhraseThinkingIndex, setCurrentSubjectPhraseThinkingIndex] = useState<number>(0);
+  const subjectPhraseThinkingIntervalRef = useRef<number | null>(null);
+
+  
+  const [isLoadingAISuggestedStyles, setIsLoadingAISuggestedStyles] = useState<boolean>(false);
+  const [aiSuggestedStylesError, setAISuggestedStylesError] = useState<string | null>(null);
+  const [aiStyleSetThinkingMessages, setAIStyleSetThinkingMessages] = useState<string[]>([]);
+  const [currentAIStyleSetThinkingIndex, setCurrentAIStyleSetThinkingIndex] = useState<number>(0);
+  const aiStyleSetThinkingIntervalRef = useRef<number | null>(null);
+
+  
+  const [isLoadingAIRoomTypeSet, setIsLoadingAIRoomTypeSet] = useState<boolean>(false);
+  const [aiRoomTypeSetError, setAIRoomTypeSetError] = useState<string | null>(null);
+  const [aiRoomTypeSetThinkingMessages, setAIRoomTypeSetThinkingMessages] = useState<string[]>([]);
+  const [currentAIRoomTypeSetThinkingIndex, setCurrentAIRoomTypeSetThinkingIndex] = useState<number>(0);
+  const aiRoomTypeSetThinkingIntervalRef = useRef<number | null>(null);
+
+  const [showAISuggestedCategoryTermsModal, setShowAISuggestedCategoryTermsModal] = useState<boolean>(false);
+  const [aiSuggestedCategoryTerms, setAISuggestedCategoryTerms] = useState<AISuggestedTerm[]>([]);
+  const [isLoadingAISuggestedCategoryTerms, setIsLoadingAISuggestedCategoryTerms] = useState<boolean>(false);
+  const [aiSuggestedCategoryTermsError, setAISuggestedCategoryTermsError] = useState<string | null>(null);
+  const [aiSuggestedCategoryTermsThinkingMessages, setAISuggestedCategoryTermsThinkingMessages] = useState<string[]>([]);
+  const [currentAISuggestedCategoryTermsThinkingIndex, setCurrentAISuggestedCategoryTermsThinkingIndex] = useState<number>(0);
+  const aiSuggestedCategoryTermsIntervalRef = useRef<number | null>(null);
+  const [targetCategoryForAISuggestions, setTargetCategoryForAISuggestions] = useState<PromptCategoryDisplay | null>(null);
+
 
   const [isPolishingEn, setIsPolishingEn] = useState<boolean>(false);
   const [isPolishingZh, setIsPolishingZh] = useState<boolean>(false);
   const [polishError, setPolishError] = useState<string | null>(null);
 
-  const [imageHistory, setImageHistory] = useState<ImageHistoryEntry[]>([]);
-  const [selectedImageForModal, setSelectedImageForModal] = useState<ImageHistoryEntry | GeneratedImage | null>(null);
-  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
-  
+  const [imageHistory, setImageHistory] = useState<ImageHistoryEntry[]>(() => {
+    try {
+      const storedHistoryJson = localStorage.getItem(IMAGE_HISTORY_STORAGE_KEY);
+      if (storedHistoryJson) {
+        const storedHistory = JSON.parse(storedHistoryJson) as ImageHistoryEntry[];
+        
+        if (Array.isArray(storedHistory)) {
+          const validHistory = storedHistory.filter(entry =>
+            entry && typeof entry.id === 'string' && typeof entry.src === 'string' &&
+            typeof entry.prompt === 'string' && typeof entry.timestamp === 'number' &&
+            entry.promptState && typeof entry.promptState.selectedStyleId !== 'undefined' 
+          ).map(entry => ({ 
+            ...entry,
+            isFavorite: !!entry.isFavorite, 
+            editBaseImageId: entry.editBaseImageId, 
+            editInstruction: entry.editInstruction, 
+          }));
+          return validHistory.slice(0, 20); 
+        }
+      }
+    } catch (error) {
+      console.error("Error loading image history from localStorage:", error);
+    }
+    return [];
+  });
+
+  const [selectedImageForModal, setSelectedImageForModal] = useState<ImageHistoryEntry | null>(null);
+  const [modalImageSourceList, setModalImageSourceList] = useState<ImageHistoryEntry[]>([]);
+  const [selectedImageIndexInSource, setSelectedImageIndexInSource] = useState<number | null>(null);
+
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showAddStyleModal, setShowAddStyleModal] = useState<boolean>(false);
-  const [showAddCustomTermModal, setShowAddCustomTermModal] = useState<boolean>(false); // New
-  const [currentCategoryForCustomTerm, setCurrentCategoryForCustomTerm] = useState<{id: string, name: string} | null>(null); // New
+  const [showAddRoomTypeModal, setShowAddRoomTypeModal] = useState<boolean>(false);
+  const [showAddCategoryModal, setShowAddCategoryModal] = useState<boolean>(false); 
+
+  const [addCustomTermModalConfig, setAddCustomTermModalConfig] = useState<AddCustomTermModalConfig>({
+    isOpen: false,
+    showCategorySelector: false,
+    modalTitleKey: 'addCustomTermModalTitle',
+  });
+
 
   const [isLoadingStyleDetailsAI, setIsLoadingStyleDetailsAI] = useState<boolean>(false);
   const [styleDetailsAIError, setStyleDetailsAIError] = useState<string | null>(null);
+  const [styleDetailsThinkingMessages, setStyleDetailsThinkingMessages] = useState<string[]>([]);
+  const [currentStyleDetailsThinkingIndex, setCurrentStyleDetailsThinkingIndex] = useState<number>(0);
+  const styleDetailsThinkingIntervalRef = useRef<number | null>(null);
 
-  const [isLoadingRandomPrompts, setIsLoadingRandomPrompts] = useState<boolean>(false); // New
-  const [randomPromptsError, setRandomPromptsError] = useState<string | null>(null); // New
 
-  // These will be populated by env-config.js
+  const [isLoadingRandomPrompts, setIsLoadingRandomPrompts] = useState<boolean>(false);
+  const [randomPromptsError, setRandomPromptsError] = useState<string | null>(null);
+
+  const [currentView, setCurrentView] = useState<'main' | 'favorites' | 'multimodalEdit' | 'imageFusion'>('main'); 
+
+  const [showMultimodalEditModal, setShowMultimodalEditModal] = useState<boolean>(false);
+  const [multimodalEditBaseImage, setMultimodalEditBaseImage] = useState<ImageHistoryEntry | null>(null);
+  const [multimodalEditInitialKeywords, setMultimodalEditInitialKeywords] = useState<AnalyzedImageKeyword[] | null>(null);
+
+
+  const [showImageFusionStudioModal, setShowImageFusionStudioModal] = useState<boolean>(false);
+  const [imageFusionStudioBaseImage, setImageFusionStudioBaseImage] = useState<ImageHistoryEntry | null>(null);
+
+
   const geminiApiKey = process.env.API_KEY;
-  const bflAIApiKey = process.env.BFL_API_KEY; 
-
-  // Debug log for API keys
-  useEffect(() => {
-    console.log("App.tsx: Effective API Keys from process.env:", {
-      gemini: geminiApiKey ? 'Loaded' : 'Not Loaded',
-      bfl_ai: bflAIApiKey ? 'Loaded' : 'Not Loaded',
-    });
-    console.log("Raw values:", {
-        geminiRaw: process.env.API_KEY,
-        bflAIRaw: process.env.BFL_API_KEY
-    });
-  }, [geminiApiKey, bflAIApiKey]);
-
+  const bflAIApiKey = process.env.BFL_API_KEY;
 
   const ai = useMemo(() => geminiApiKey ? new GoogleGenAI({ apiKey: geminiApiKey }) : null, [geminiApiKey]);
-  const rightColumnRef = useRef<HTMLDivElement>(null);
+  const imageGeneratorColumnRef = useRef<HTMLDivElement>(null); 
+
+  const togglePromptCategoriesModal = () => setShowPromptCategoriesModal(prev => !prev); 
+
 
   useEffect(() => {
-    try { localStorage.setItem(USER_STYLES_STORAGE_KEY, JSON.stringify(userDesignStyles)); }
-    catch (e) { console.error("Error saving user styles to localStorage:", e); }
-  }, [userDesignStyles]);
-
-  useEffect(() => { // Save custom terms to localStorage
-    try { localStorage.setItem(USER_CUSTOM_PROMPT_TERMS_STORAGE_KEY, JSON.stringify(userCustomTerms)); }
-    catch (e) { console.error("Error saving custom prompt terms to localStorage:", e); }
-  }, [userCustomTerms]);
-
-  const relevantCategories = useMemo(() => {
-    const sourceCategories = userPromptCategories; // Use combined categories
-    if (selectedStyle?.relatedCategories && selectedStyle.relatedCategories.length > 0) {
-      return sourceCategories.filter(cat => selectedStyle.relatedCategories.includes(cat.id));
+    const currentSelectedStyleId = selectedStyle?.id;
+    if (currentSelectedStyleId) {
+        const styleInNewSettings = designStyles.find(s => s.id === currentSelectedStyleId);
+        if (styleInNewSettings) {
+            if (JSON.stringify(selectedStyle) !== JSON.stringify(styleInNewSettings)) {
+                setSelectedStyle(styleInNewSettings);
+            }
+        } else {
+            setSelectedStyle(designStyles[0] || null);
+        }
+    } else if (designStyles.length > 0) {
+        setSelectedStyle(designStyles[0]);
+    } else {
+        setSelectedStyle(null);
     }
-    return sourceCategories;
-  }, [selectedStyle, userPromptCategories]);
+  }, [designStyles, selectedStyle]);
 
-  const [accordionStates, setAccordionStates] = useState<Record<string, boolean>>(() => {
+  useEffect(() => {
+    const currentSelectedRoomTypeId = selectedRoomType?.id;
+    if (currentSelectedRoomTypeId) {
+        const roomTypeInNewSettings = roomTypes.find(rt => rt.id === currentSelectedRoomTypeId);
+        if (roomTypeInNewSettings) {
+             if (JSON.stringify(selectedRoomType) !== JSON.stringify(roomTypeInNewSettings)) {
+                setSelectedRoomType(roomTypeInNewSettings);
+            }
+        } else {
+            setSelectedRoomType(roomTypes[0] || null);
+        }
+    } else if (roomTypes.length > 0) {
+        setSelectedRoomType(roomTypes[0]);
+    } else {
+        setSelectedRoomType(null);
+    }
+    
+  }, [roomTypes, selectedRoomType]);
+
+
+  useEffect(() => {
+    try {
+      // Defensively ensure an array is always stringified for localStorage
+      const historyToStore = Array.isArray(imageHistory) ? imageHistory : [];
+      localStorage.setItem(IMAGE_HISTORY_STORAGE_KEY, JSON.stringify(historyToStore));
+    } catch (error) {
+      console.error("Error saving image history to localStorage:", error);
+      if (error instanceof DOMException && (error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED')) {
+        // Inform user or try to prune older history if quota is exceeded.
+        // For now, just logging.
+      }
+    }
+  }, [imageHistory]);
+
+
+  const relevantCategories: PromptCategoryDisplay[] = useMemo(() => {
+    const allCategories = processedPromptCategories;
+    if (selectedStyle?.relatedCategories && selectedStyle.relatedCategories.length > 0) {
+      return allCategories.filter(cat => selectedStyle.relatedCategories.includes(cat.id));
+    }
+    return allCategories;
+  }, [selectedStyle, processedPromptCategories]);
+
+  const accordionStates = useMemo(() => {
     const initialState: Record<string, boolean> = {};
     relevantCategories.forEach(cat => { initialState[cat.id] = cat.isOpen !== undefined ? cat.isOpen : false; });
     return initialState;
-  });
+  }, [relevantCategories]); 
 
-  useEffect(() => {
-    setAccordionStates(prevStates => {
+  const [manualAccordionStates, setManualAccordionStates] = useState<Record<string, boolean>>({});
+
+  useEffect(() => { 
+    setManualAccordionStates(prevStates => {
         const newStates: Record<string, boolean> = {};
-        let changed = false;
         relevantCategories.forEach(cat => {
-            if (prevStates[cat.id] !== undefined) newStates[cat.id] = prevStates[cat.id];
-            else { newStates[cat.id] = cat.isOpen !== undefined ? cat.isOpen : false; changed = true; }
+            newStates[cat.id] = prevStates[cat.id] !== undefined ? prevStates[cat.id] : (cat.isOpen || false);
         });
-        const oldKeys = Object.keys(prevStates);
-        const newKeys = Object.keys(newStates);
-        if (oldKeys.length !== newKeys.length || oldKeys.some(key => !newKeys.includes(key))) changed = true;
-        return changed ? newStates : prevStates;
+        return newStates;
     });
   }, [relevantCategories]);
 
-  const handleToggleAccordion = (categoryId: string) => setAccordionStates(prev => ({ ...prev, [categoryId]: !prev[categoryId] }));
+  const getAccordionOpenState = useCallback((categoryId: string) => {
+    return manualAccordionStates[categoryId] !== undefined ? manualAccordionStates[categoryId] : (accordionStates[categoryId] || false);
+  }, [manualAccordionStates, accordionStates]);
+
+  const handleToggleAccordion = (categoryId: string) => {
+    setManualAccordionStates(prev => ({ ...prev, [categoryId]: !getAccordionOpenState(categoryId) }));
+  };
+  
   const handleExpandAllAccordions = () => {
       const allOpen: Record<string, boolean> = {};
       relevantCategories.forEach(cat => { allOpen[cat.id] = true; });
-      setAccordionStates(prev => ({ ...prev, ...allOpen }));
+      setManualAccordionStates(prev => ({ ...prev, ...allOpen }));
   };
   const handleCollapseAllAccordions = () => {
       const allClosed: Record<string, boolean> = {};
       relevantCategories.forEach(cat => { allClosed[cat.id] = false; });
-      setAccordionStates(prev => ({ ...prev, ...allClosed }));
+      setManualAccordionStates(prev => ({ ...prev, ...allClosed }));
   };
 
-  const getNextOrder = useCallback(() => {
-    if (activePromptTerms.size === 0) return 1;
-    return Math.max(0, ...Array.from(activePromptTerms.values()).map(t => t.order || 0)) + 1;
-  }, [activePromptTerms]);
+
+  const getNextOrderBasedOnMap = useCallback((termsMap: Map<string, SelectedPromptTerm>) => {
+    if (termsMap.size === 0) return 1;
+    return Math.max(0, ...Array.from(termsMap.values()).map(t => t.order || 0)) + 1;
+  }, []);
+
+  const getNextOrder = useCallback(() => getNextOrderBasedOnMap(activePromptTerms), [activePromptTerms, getNextOrderBasedOnMap]);
+
 
   const updatePrompts = useCallback(() => {
     const termsArray = Array.from(activePromptTerms.values()).sort((a,b) => (a.order || 0) - (b.order || 0) );
-    const baseEnParts: string[] = [];
-    if (selectedStyle) baseEnParts.push(selectedStyle.basePromptEn);
-    if (selectedRoomType) baseEnParts.push(selectedRoomType.termEn);
-    const baseZhParts: string[] = [];
-    if (selectedStyle) baseZhParts.push(selectedStyle.basePromptZh);
-    if (selectedRoomType) baseZhParts.push(selectedRoomType.termZh);
-    const enPrompt = [...baseEnParts, ...termsArray.map(term => term.weight === 1 ? term.termEn : `(${term.termEn}:${term.weight.toFixed(1)})`)].join(', ');
-    const zhPrompt = [...baseZhParts, ...termsArray.map(term => term.weight === 1 ? term.termZh : `(${term.termZh}:${term.weight.toFixed(1)})`)].join(', ');
-    setGeneratedPromptEn(enPrompt);
-    setGeneratedPromptZh(zhPrompt);
-  }, [activePromptTerms, selectedStyle, selectedRoomType]);
 
-  useEffect(() => { updatePrompts(); }, [activePromptTerms, selectedStyle, selectedRoomType, updatePrompts]);
+    const enParts: string[] = [];
+    const zhParts: string[] = [];
+
+    if (settings.appContextThemeEn && settings.appContextThemeEn.trim() !== '') {
+        enParts.push(settings.appContextThemeEn.trim());
+    }
+    if (settings.appContextThemeZh && settings.appContextThemeZh.trim() !== '') {
+        zhParts.push(settings.appContextThemeZh.trim());
+    }
+
+    if (selectedStyle) enParts.push(selectedStyle.nameEn);
+    if (isSubjectInputEnabled && subjectInputEn.trim()) enParts.push(subjectInputEn.trim());
+    if (selectedRoomType && isRoomTypeSelectorEnabled) enParts.push(selectedRoomType.termEn);
+
+    if (selectedStyle) zhParts.push(selectedStyle.nameZh);
+    if (isSubjectInputEnabled && subjectInputZh.trim()) zhParts.push(subjectInputZh.trim());
+    if (selectedRoomType && isRoomTypeSelectorEnabled) zhParts.push(selectedRoomType.termZh);
+
+    termsArray.forEach(term => {
+      const termEnString = term.weight === 1 ? term.termEn : `(${term.termEn}:${term.weight.toFixed(1)})`;
+      const termZhString = term.weight === 1 ? term.termZh : `(${term.termZh}:${term.weight.toFixed(1)})`;
+
+      if (term.categoryId === 'ai_analyzed_image_terms' || isPromptCategoriesEnabled || term.categoryId === 'style_detail_keyword') {
+        enParts.push(termEnString);
+        zhParts.push(termZhString);
+      }
+    });
+
+    setAutoGeneratedPromptEn(enParts.join(', ')); 
+    setAutoGeneratedPromptZh(zhParts.join(', ')); 
+  }, [activePromptTerms, selectedStyle, selectedRoomType, subjectInputEn, subjectInputZh, isSubjectInputEnabled, isPromptCategoriesEnabled, isRoomTypeSelectorEnabled, settings.appContextThemeEn, settings.appContextThemeZh]);
+
+  useEffect(() => { 
+    updatePrompts();
+    
+    if (!isPromptEnManual) setManualPromptEn(autoGeneratedPromptEn);
+    if (!isPromptZhManual) setManualPromptZh(autoGeneratedPromptZh);
+  }, [activePromptTerms, selectedStyle, selectedRoomType, subjectInputEn, subjectInputZh, isSubjectInputEnabled, isPromptCategoriesEnabled, isRoomTypeSelectorEnabled, updatePrompts, isPromptEnManual, isPromptZhManual, autoGeneratedPromptEn, autoGeneratedPromptZh, settings.appContextThemeEn, settings.appContextThemeZh]);
+
 
   const handleStyleSelect = useCallback((style: DesignStyle) => setSelectedStyle(style), []);
-  const handleRoomTypeSelect = useCallback((roomType: PromptTerm | null) => setSelectedRoomType(roomType), []); // Updated type
+  const handleRoomTypeSelect = useCallback((roomType: PromptTerm | null) => setSelectedRoomType(roomType), []);
 
-  const toggleTerm = useCallback((term: PromptTerm, categoryId: string, order?: number) => { // Updated type
+  const toggleTerm = useCallback((term: PromptTerm, categoryId: string, order?: number) => {
     setActivePromptTerms(prevTerms => {
       const newTerms = new Map(prevTerms);
-      if (newTerms.has(term.id)) newTerms.delete(term.id);
-      else {
-        const termOrder = order !== undefined ? order : getNextOrder();
+      if (newTerms.has(term.id)) {
+        newTerms.delete(term.id);
+      } else {
+        const termOrder = order !== undefined ? order : getNextOrderBasedOnMap(newTerms);
         newTerms.set(term.id, { ...term, weight: 1.0, locked: false, categoryId, order: termOrder });
       }
       return newTerms;
     });
-  }, [getNextOrder]);
+    
+    setIsPromptEnManual(false);
+    setIsPromptZhManual(false);
+  }, [getNextOrderBasedOnMap]);
+  
+  const handleRemoveTermFromBuilder = useCallback((termId: string) => {
+    const termToRemove = Array.from(activePromptTerms.values()).find(t => t.id === termId);
+    if (termToRemove) {
+        toggleTerm(termToRemove, termToRemove.categoryId || 'unknown_category_for_removal');
+    }
+  }, [activePromptTerms, toggleTerm]);
+
 
   const updateTermWeight = useCallback((termId: string, delta: number) => {
     setActivePromptTerms(prevTerms => {
@@ -215,197 +488,909 @@ const AppContent: React.FC = () => {
       const term = newTerms.get(termId);
       if (term) {
         const newWeight = Math.max(0.1, Math.min(2.0, parseFloat((term.weight + delta).toFixed(1))));
-        newTerms.set(termId, { ...term, weight: newWeight });
+        newTerms.set(term.id, { ...term, weight: newWeight });
       }
       return newTerms;
     });
+    setIsPromptEnManual(false); setIsPromptZhManual(false);
   }, []);
 
   const toggleTermLock = useCallback((termId: string) => {
     setActivePromptTerms(prevTerms => {
       const newTerms = new Map(prevTerms);
       const term = newTerms.get(termId);
-      if (term) newTerms.set(termId, { ...term, locked: !term.locked });
+      if (term) {
+        newTerms.set(termId, { ...term, locked: !term.locked });
+      }
       return newTerms;
     });
+    
   }, []);
-  
-  const handleClearAllTerms = useCallback(() => setActivePromptTerms(new Map()), []);
 
-  const handleAddKeywordFromDetails = useCallback((termEn: string, termZh: string) => {
-    const termId = `detail_${termEn.toLowerCase().replace(/[^a-z0-9]/g, '_').slice(0, 20)}_${Date.now()%1000}`;
-    const newTerm: PromptTerm = { id: termId, termEn, termZh, categoryId: 'style_detail_keyword' }; // Added categoryId
-    const existingTerm = Array.from(activePromptTerms.values()).find(t => t.termEn.toLowerCase() === termEn.toLowerCase());
-    if (!activePromptTerms.has(termId) && !existingTerm) toggleTerm(newTerm, 'style_detail_keyword', getNextOrder());
-    else if (existingTerm) console.log("Term already exists:", existingTerm.termEn);
-  }, [activePromptTerms, toggleTerm, getNextOrder]);
+  const handleClearAllTerms = useCallback(() => {
+    setActivePromptTerms(new Map());
+    setIsPromptEnManual(false); setIsPromptZhManual(false);
+  }, []);
+
+  const handleAddKeywordFromDetails = useCallback((styleId: string, setIndex: number, termEn: string, termZh: string) => {
+    const termId = `style_detail_keyword:${styleId}:${setIndex}:${termEn.toLowerCase().replace(/\s+/g, '_')}`; 
+    const newTerm: PromptTerm = { id: termId, termEn, termZh, categoryId: 'style_detail_keyword' };
+    toggleTerm(newTerm, 'style_detail_keyword');
+  }, [toggleTerm]);
+
 
   const handleGetAISuggestions = useCallback(async () => {
-    if (!ai || !selectedStyle || !selectedRoomType) {
-      setAiSuggestionError("請先選擇風格和空間類型。");
+    
+    if (!ai || !selectedStyle) {
+      setAiSuggestionError("請先選擇風格。");
       return;
     }
+
+    if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current);
     setIsLoadingAiSuggestions(true);
     setAiSuggestionError(null);
-    setAiSuggestedTerms([]); 
+    setAiSuggestedTerms([]);
+
     const currentTermsString = Array.from(activePromptTerms.values()).map(t => `${t.termEn} (${t.termZh})`).join(', ') || '無';
-    const prompt = `您是一位專業的室內設計提示詞助手。
-使用者選擇的風格是：「${selectedStyle.nameEn} / ${selectedStyle.nameZh}」，空間類型是：「${selectedRoomType.termEn} / ${selectedRoomType.termZh}」。
-目前已選用的提示詞有：${currentTermsString}。
-請建議5-7個獨特且互補的提示詞（關鍵字或短語），包含英文和繁體中文，以增強此室內設計的AI圖像生成提示詞效果。
-重點關注：
-- 符合風格但通常未列出的特定材料。
-- 獨特的裝飾品或特徵。
-- 氛圍或情緒描述詞。
-- 特定的照明品質。
-- 增添真實感或藝術感的元素。
-請勿建議過於通用或已被風格/空間類型暗示的詞語。請勿建議与「目前已選用的提示詞」列表中相似的詞語。
-請以有效的JSON陣列物件格式返回建議。每個物件必須具有以下結構：
-{ "id": "一個該詞語的唯一字串識別碼 (ai_sugg_開頭)", "termEn": "English Term", "termZh": "繁體中文術語" }
-確保JSON格式正確，且僅包含建議物件的陣列。`;
+    const roomTypeEnForPrompt = (selectedRoomType && isRoomTypeSelectorEnabled) ? selectedRoomType.termEn : "Not specified";
+    const roomTypeZhForPrompt = (selectedRoomType && isRoomTypeSelectorEnabled) ? selectedRoomType.termZh : "未指定";
+    
+    const steps = [
+      `分析風格: ${selectedStyle.nameEn} (${selectedStyle.nameZh})`,
+      `考量空間: ${roomTypeEnForPrompt} (${roomTypeZhForPrompt})`,
+      `檢視現有詞語: ${currentTermsString.length > 40 ? currentTermsString.substring(0, 37) + "..." : currentTermsString}`,
+      "腦力激盪互補關鍵字...",
+      "探索獨特材質与裝飾元素...",
+      "構思氛圍與光影細節...",
+      "篩選相關性並避免冗餘...",
+      "準備建議格式...",
+      "即將完成！正在整理清單...",
+    ];
+    setThinkingProcessMessages(steps);
+    setCurrentThinkingMessageIndex(0);
+
+    thinkingIntervalRef.current = window.setInterval(() => {
+      setCurrentThinkingMessageIndex(prevIndex => {
+        if (prevIndex < steps.length - 1) {
+          return prevIndex + 1;
+        }
+        if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current); 
+        thinkingIntervalRef.current = null;
+        return prevIndex;
+      });
+    }, 1200); 
+
+    if (!showAiSuggestionsModal) setShowAiSuggestionsModal(true);
+
+    const promptTemplate = aiSystemPrompts.aiTermSuggestions.template;
+    const prompt = fillPromptTemplate(promptTemplate, {
+        styleNameEn: selectedStyle.nameEn,
+        styleNameZh: selectedStyle.nameZh,
+        roomTypeEn: roomTypeEnForPrompt,
+        roomTypeZh: roomTypeZhForPrompt,
+        currentTerms: currentTermsString,
+        subjectSuggestionSeedText: aiSuggestionSeedText.trim() || "使用者未提供主體建議參考文字。AI應基於風格、空間等其他脈絡提供通用提示詞建議。",
+        appContextThemeEn: appContextThemeEn || "Interior Design",
+        appContextThemeZh: appContextThemeZh || "室內設計",
+    });
+
     try {
       const response: GeminiGenerateContentResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash-preview-04-17', contents: prompt, config: { responseMimeType: "application/json" } });
+      if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current); 
+      thinkingIntervalRef.current = null;
+
       const parsedSuggestions = parseGeminiJsonResponse<AISuggestedTerm[]>(response.text);
       if (parsedSuggestions && Array.isArray(parsedSuggestions)) {
         const validSuggestions = parsedSuggestions.filter(term => term && typeof term.id === 'string' && typeof term.termEn === 'string' && typeof term.termZh === 'string' && term.id && term.termEn && term.termZh);
-        if (validSuggestions.length > 0) { setAiSuggestedTerms(validSuggestions); if (!showAiSuggestionsModal) setShowAiSuggestionsModal(true); }
-        else { setAiSuggestionError("AI建議已收到，但部分項目缺少必要欄位或為空。"); console.error("有問題的建議數據:", parsedSuggestions, "原始文本:", response.text); }
-      } else { setAiSuggestionError("AI返回了意外的格式。"); console.error("解析建議錯誤或非陣列:", parsedSuggestions, "原始文本:", response.text); }
-    } catch (e: any) { console.error("獲取AI建議時出錯:", e); setAiSuggestionError(`獲取AI建議失敗：${e.message || '未知錯誤'}`); }
-    finally { setIsLoadingAiSuggestions(false); }
-  }, [ai, selectedStyle, selectedRoomType, activePromptTerms, showAiSuggestionsModal]);
+        if (validSuggestions.length > 0) {
+            setAiSuggestedTerms(validSuggestions);
+        } else {
+            setAiSuggestionError("AI建議已收到，但部分項目缺少必要欄位或為空。");
+            console.error("有問題的建議數據:", parsedSuggestions, "原始文本:", response.text);
+            setAiSuggestedTerms([]);
+        }
+      } else {
+        setAiSuggestionError("AI返回了意外的格式。");
+        console.error("解析建議錯誤或非陣列:", parsedSuggestions, "原始文本:", response.text);
+        setAiSuggestedTerms([]);
+      }
+    } catch (e: any) {
+      if (thinkingIntervalRef.current) clearInterval(thinkingIntervalRef.current);
+      thinkingIntervalRef.current = null;
+      console.error("獲取AI建議時出錯:", e);
+      setAiSuggestionError(`獲取AI建議失敗：${e.message || '未知錯誤'}`);
+      setAiSuggestedTerms([]);
+    } finally {
+      setIsLoadingAiSuggestions(false);
+    }
+  }, [ai, selectedStyle, selectedRoomType, isRoomTypeSelectorEnabled, activePromptTerms, showAiSuggestionsModal, aiSystemPrompts.aiTermSuggestions, aiSuggestionSeedText, appContextThemeEn, appContextThemeZh]); 
+
+
+  
+  const handleFetchSubjectPhraseSuggestions = useCallback(async () => {
+    if (!ai || !selectedStyle) {
+      setSubjectPhraseSuggestionError("請先選擇風格。");
+      return;
+    }
+    
+
+    if (subjectPhraseThinkingIntervalRef.current) clearInterval(subjectPhraseThinkingIntervalRef.current);
+    setIsLoadingSubjectPhraseSuggestions(true);
+    setSubjectPhraseSuggestionError(null);
+    setSubjectPhraseSuggestions([]);
+
+    const roomTypeEnForPrompt = (selectedRoomType && isRoomTypeSelectorEnabled) ? selectedRoomType.termEn : "Not specified";
+    const roomTypeZhForPrompt = (selectedRoomType && isRoomTypeSelectorEnabled) ? selectedRoomType.termZh : "未指定";
+    const analyzedKeywordsString = lastAnalyzedKeywords ? lastAnalyzedKeywords.map(kw => `${kw.termEn} / ${kw.termZh}`).join(', ') : "無";
+    const ocrTextFromImage = analyzedImageForSubjectContext ? "待實現OCR" : "無"; 
+
+    const steps = [
+      `分析風格: ${selectedStyle.nameEn} (${selectedStyle.nameZh})`,
+      `考量空間: ${roomTypeEnForPrompt} (${roomTypeZhForPrompt})`,
+      `根據參考文字: "${aiSuggestionSeedText.trim() ? aiSuggestionSeedText.substring(0, 20) + "..." : "無 (通用建議)"}"`,
+      "生成主體內容描述建議...",
+      "即將完成！"
+    ];
+    setSubjectPhraseThinkingMessages(steps);
+    setCurrentSubjectPhraseThinkingIndex(0);
+
+    subjectPhraseThinkingIntervalRef.current = window.setInterval(() => {
+      setCurrentSubjectPhraseThinkingIndex(prevIndex => {
+        if (prevIndex < steps.length - 1) return prevIndex + 1;
+        if (subjectPhraseThinkingIntervalRef.current) clearInterval(subjectPhraseThinkingIntervalRef.current);
+        subjectPhraseThinkingIntervalRef.current = null;
+        return prevIndex;
+      });
+    }, 1200);
+
+    if (!showSubjectPhraseSuggestionsModal) setShowSubjectPhraseSuggestionsModal(true);
+
+    const promptTemplate = aiSystemPrompts.subjectSuggestion.template;
+    const seedTextForPrompt = aiSuggestionSeedText.trim() || "使用者未提供主體建議參考文字。AI應基於風格、空間等其他脈絡提供通用提示詞建議。";
+
+    const prompt = fillPromptTemplate(promptTemplate, {
+      subjectSuggestionSeedText: seedTextForPrompt,
+      appContextThemeEn: appContextThemeEn || "Interior Design",
+      appContextThemeZh: appContextThemeZh || "室內設計",
+      selectedStyleNameEn: selectedStyle.nameEn,
+      selectedStyleNameZh: selectedStyle.nameZh,
+      selectedRoomTypeNameEn: roomTypeEnForPrompt,
+      selectedRoomTypeNameZh: roomTypeZhForPrompt,
+      analyzedImageKeywordsString: analyzedKeywordsString,
+      ocrTextFromImage: ocrTextFromImage,
+    });
+
+    try {
+      const response: GeminiGenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      if (subjectPhraseThinkingIntervalRef.current) clearInterval(subjectPhraseThinkingIntervalRef.current);
+      subjectPhraseThinkingIntervalRef.current = null;
+
+      const parsed = parseGeminiJsonResponse<AISuggestionItem[]>(response.text);
+      if (parsed && Array.isArray(parsed) && parsed.every(item => typeof item.suggestionEn === 'string' && typeof item.suggestionZh === 'string')) {
+        setSubjectPhraseSuggestions(parsed);
+      } else {
+        setSubjectPhraseSuggestionError("AI 未能提供主體內容建議，或返回了意外的格式。");
+        console.error("Failed to parse subject phrase suggestions:", response.text, parsed);
+      }
+    } catch (e: any) {
+      if (subjectPhraseThinkingIntervalRef.current) clearInterval(subjectPhraseThinkingIntervalRef.current);
+      subjectPhraseThinkingIntervalRef.current = null;
+      console.error("Error fetching subject phrase suggestions:", e);
+      setSubjectPhraseSuggestionError(`獲取主體內容建議失敗：${e.message || '未知錯誤'}`);
+    } finally {
+      setIsLoadingSubjectPhraseSuggestions(false);
+    }
+  }, [
+    ai, selectedStyle, selectedRoomType, isRoomTypeSelectorEnabled, 
+    aiSuggestionSeedText, appContextThemeEn, appContextThemeZh, lastAnalyzedKeywords, analyzedImageForSubjectContext,
+    aiSystemPrompts.subjectSuggestion, showSubjectPhraseSuggestionsModal
+  ]);
+
+  const handleApplySubjectPhraseSuggestion = useCallback((suggestion: AISuggestionItem) => {
+    setSubjectInputEn(suggestion.suggestionEn);
+    setSubjectInputZh(suggestion.suggestionZh);
+    setShowSubjectPhraseSuggestionsModal(false);
+  }, [setSubjectInputEn, setSubjectInputZh]);
+
+  const handleFetchAISuggestedCategoryTerms = useCallback(async (
+    categoryInfo: { id: string, nameEn: string, nameZh: string },
+    currentTermEnSeed?: string, 
+    currentTermZhSeed?: string  
+  ) => {
+    if (!ai || !selectedStyle) {
+      setAISuggestedCategoryTermsError("請先選擇風格以獲取分類詞語建議。");
+      return;
+    }
+    if (!categoryInfo || !categoryInfo.id) {
+      setAISuggestedCategoryTermsError("目標分類資訊不完整。");
+      return;
+    }
+
+    setTargetCategoryForAISuggestions(categoryInfo as PromptCategoryDisplay); 
+    if (aiSuggestedCategoryTermsIntervalRef.current) clearInterval(aiSuggestedCategoryTermsIntervalRef.current);
+    setIsLoadingAISuggestedCategoryTerms(true);
+    setAISuggestedCategoryTermsError(null);
+    setAISuggestedCategoryTerms([]);
+
+    const existingTermsInCategory = customPromptCategorySettings[categoryInfo.id]?.terms || [];
+    const existingTermsJSON = JSON.stringify(existingTermsInCategory.map(t => ({id: t.id, termEn: t.termEn, termZh: t.termZh})));
+    
+    const steps = [
+      `分析分類: ${categoryInfo.nameEn} / ${categoryInfo.nameZh}`,
+      `考量應用主題: ${appContextThemeZh || appContextThemeEn || "通用"}`,
+      `參考風格: ${selectedStyle.nameEn} (${selectedStyle.nameZh})`,
+      currentTermEnSeed || currentTermZhSeed ? `參考當前輸入: "${(currentTermEnSeed || currentTermZhSeed || "").substring(0,15)}..."` : "未提供當前輸入參考",
+      `生成「${categoryInfo.nameZh}」的AI建議詞語...`,
+      "即將完成！"
+    ];
+    setAISuggestedCategoryTermsThinkingMessages(steps);
+    setCurrentAISuggestedCategoryTermsThinkingIndex(0);
+
+    aiSuggestedCategoryTermsIntervalRef.current = window.setInterval(() => {
+      setCurrentAISuggestedCategoryTermsThinkingIndex(prev => {
+        if (prev < steps.length - 1) return prev + 1;
+        if (aiSuggestedCategoryTermsIntervalRef.current) clearInterval(aiSuggestedCategoryTermsIntervalRef.current);
+        return prev;
+      });
+    }, 1200);
+
+    if (!showAISuggestedCategoryTermsModal) setShowAISuggestedCategoryTermsModal(true);
+
+    const promptTemplate = aiSystemPrompts.aiCategoryTermSuggestions.template;
+    const prompt = fillPromptTemplate(promptTemplate, {
+      categoryNameEn: categoryInfo.nameEn,
+      categoryNameZh: categoryInfo.nameZh,
+      appContextThemeEn: appContextThemeEn || "Interior Design",
+      appContextThemeZh: appContextThemeZh || "室內設計",
+      selectedStyleNameEn: selectedStyle.nameEn,
+      selectedStyleBasePromptEn: selectedStyle.basePromptEn,
+      selectedStyleNameZh: selectedStyle.nameZh,
+      selectedStyleBasePromptZh: selectedStyle.basePromptZh,
+      existingTermsJSON: existingTermsJSON,
+      categoryId: categoryInfo.id,
+    });
+    
+    try {
+      const response: GeminiGenerateContentResponse = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      if (aiSuggestedCategoryTermsIntervalRef.current) clearInterval(aiSuggestedCategoryTermsIntervalRef.current);
+
+      const parsedResult = parseGeminiJsonResponse<AISuggestedTerm[]>(response.text);
+      if (parsedResult && Array.isArray(parsedResult)) {
+        const validSuggestions = parsedResult.filter(term => 
+            term && typeof term.id === 'string' && term.id.trim() !== '' &&
+            typeof term.termEn === 'string' && term.termEn.trim() !== '' &&
+            typeof term.termZh === 'string' && term.termZh.trim() !== '' &&
+            term.categoryId === categoryInfo.id && term.isCustom === true
+        );
+        if (validSuggestions.length > 0) {
+          setAISuggestedCategoryTerms(validSuggestions);
+        } else {
+          setAISuggestedCategoryTermsError("AI建議已收到，但部分項目缺少必要欄位、為空、或欄位值不符預期 (例如 isCustom 不為 true 或 categoryId 不符)。");
+          console.error("AI Category Terms: Invalid data format from AI.", parsedResult, "Original text:", response.text);
+        }
+      } else {
+        setAISuggestedCategoryTermsError("AI返回的詞語建議格式不正確或為空。");
+        console.error("AI Category Terms: Failed to parse JSON or not an array.", response.text, parsedResult);
+      }
+    } catch (e: any) {
+      if (aiSuggestedCategoryTermsIntervalRef.current) clearInterval(aiSuggestedCategoryTermsIntervalRef.current);
+      console.error("Error fetching AI category term suggestions:", e);
+      setAISuggestedCategoryTermsError(`獲取分類詞語建議失敗: ${e.message || '未知錯誤'}`);
+    } finally {
+      setIsLoadingAISuggestedCategoryTerms(false);
+    }
+  }, [
+    ai, selectedStyle, appContextThemeEn, appContextThemeZh, customPromptCategorySettings, 
+    aiSystemPrompts.aiCategoryTermSuggestions, showAISuggestedCategoryTermsModal
+  ]);
+
+  const handleAddMultipleTermsToCategoryFromModal = useCallback((terms: PromptTerm[], categoryId: string) => {
+    if (!settingsContext) return;
+    contextAddMultipleTermsToCategory(categoryId, terms);
+    setShowAISuggestedCategoryTermsModal(false);
+  }, [settingsContext, contextAddMultipleTermsToCategory]);
+
+
+  useEffect(() => {
+    return () => {
+      if (thinkingIntervalRef.current) {
+        clearInterval(thinkingIntervalRef.current);
+        thinkingIntervalRef.current = null;
+      }
+      if (styleDetailsThinkingIntervalRef.current) {
+        clearInterval(styleDetailsThinkingIntervalRef.current);
+        styleDetailsThinkingIntervalRef.current = null;
+      }
+      if (subjectPhraseThinkingIntervalRef.current) { 
+        clearInterval(subjectPhraseThinkingIntervalRef.current);
+        subjectPhraseThinkingIntervalRef.current = null;
+      }
+      if (aiStyleSetThinkingIntervalRef.current) { 
+        clearInterval(aiStyleSetThinkingIntervalRef.current);
+        aiStyleSetThinkingIntervalRef.current = null;
+      }
+      if (aiRoomTypeSetThinkingIntervalRef.current) { 
+        clearInterval(aiRoomTypeSetThinkingIntervalRef.current);
+        aiRoomTypeSetThinkingIntervalRef.current = null;
+      }
+      if (aiSuggestedCategoryTermsIntervalRef.current) { 
+        clearInterval(aiSuggestedCategoryTermsIntervalRef.current);
+        aiSuggestedCategoryTermsIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!showAiSuggestionsModal && thinkingIntervalRef.current) {
+      clearInterval(thinkingIntervalRef.current);
+      thinkingIntervalRef.current = null;
+      setThinkingProcessMessages([]);
+      setCurrentThinkingMessageIndex(0);
+    }
+  }, [showAiSuggestionsModal]);
+
+   useEffect(() => { 
+    if (!showSubjectPhraseSuggestionsModal && subjectPhraseThinkingIntervalRef.current) {
+      clearInterval(subjectPhraseThinkingIntervalRef.current);
+      subjectPhraseThinkingIntervalRef.current = null;
+      setSubjectPhraseThinkingMessages([]);
+      setCurrentSubjectPhraseThinkingIndex(0);
+    }
+  }, [showSubjectPhraseSuggestionsModal]);
+
+  useEffect(() => {
+    if (!showStyleDetails && styleDetailsThinkingIntervalRef.current) {
+        clearInterval(styleDetailsThinkingIntervalRef.current);
+        styleDetailsThinkingIntervalRef.current = null;
+        setStyleDetailsThinkingMessages([]);
+        setCurrentStyleDetailsThinkingIndex(0);
+    }
+  }, [showStyleDetails]);
+  
+  useEffect(() => { 
+    if (!showAISuggestedCategoryTermsModal && aiSuggestedCategoryTermsIntervalRef.current) {
+      clearInterval(aiSuggestedCategoryTermsIntervalRef.current);
+      aiSuggestedCategoryTermsIntervalRef.current = null;
+      setAISuggestedCategoryTermsThinkingMessages([]);
+      setCurrentAISuggestedCategoryTermsThinkingIndex(0);
+    }
+  }, [showAISuggestedCategoryTermsModal]);
+
 
   const addAISuggestedTerm = useCallback((term: AISuggestedTerm) => {
-    const order = getNextOrder(); 
-    toggleTerm(term, 'ai_suggested', order);
-  }, [toggleTerm, getNextOrder]);
+    toggleTerm(term, 'ai_suggested'); 
+  }, [toggleTerm]);
 
   const handlePolishPrompt = useCallback(async (language: 'en' | 'zh') => {
     if (!ai) return;
-    const promptToPolish = language === 'en' ? generatedPromptEn : generatedPromptZh;
-    if (!promptToPolish) { setPolishError(`該 ${language === 'en' ? '英文' : '中文'} 提示詞為空。`); return; }
-    if (language === 'en') setIsPolishingEn(true); else setIsPolishingZh(true);
+    const isEnglish = language === 'en';
+    const promptToPolish = isEnglish ? (isPromptEnManual ? manualPromptEn : autoGeneratedPromptEn) : (isPromptZhManual ? manualPromptZh : autoGeneratedPromptZh);
+    
+    if (!promptToPolish) { setPolishError(`該 ${isEnglish ? '英文' : '中文'} 提示詞為空。`); return; }
+    
+    if (isEnglish) setIsPolishingEn(true); else setIsPolishingZh(true);
     setPolishError(null);
-    const polishInstruction = language === 'en' ? 
-      `Refine the English prompt for interior design AI: "${promptToPolish}". Make it vivid, descriptive, optimized. Return only refined prompt.`
-      : `優化繁體中文室內設計AI提示詞：「${promptToPolish}」。使其生動、描述性強、優化。僅返回優化後提示詞。`;
+
+    const promptTemplate = isEnglish ? aiSystemPrompts.polishPromptEn.template : aiSystemPrompts.polishPromptZh.template;
+    const polishInstruction = fillPromptTemplate(promptTemplate, { 
+        promptToPolish,
+        appContextThemeEn: appContextThemeEn || "Interior Design",
+        appContextThemeZh: appContextThemeZh || "室內設計",
+    });
+
     try {
       const response: GeminiGenerateContentResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash-preview-04-17', contents: polishInstruction });
       const polishedText = response.text.trim();
-      if (language === 'en') setGeneratedPromptEn(polishedText); else setGeneratedPromptZh(polishedText);
+      if (isEnglish) {
+        setManualPromptEn(polishedText);
+        setIsPromptEnManual(true); 
+      } else {
+        setManualPromptZh(polishedText);
+        setIsPromptZhManual(true); 
+      }
     } catch (e: any) { console.error(`潤飾 ${language} 提示詞時出錯:`, e); setPolishError(`未能潤飾 ${language} 提示詞: ${e.message || '未知錯誤'}`); }
-    finally { if (language === 'en') setIsPolishingEn(false); else setIsPolishingZh(false); }
-  }, [ai, generatedPromptEn, generatedPromptZh]);
+    finally { if (isEnglish) setIsPolishingEn(false); else setIsPolishingZh(false); }
+  }, [ai, autoGeneratedPromptEn, autoGeneratedPromptZh, manualPromptEn, manualPromptZh, isPromptEnManual, isPromptZhManual, aiSystemPrompts.polishPromptEn, aiSystemPrompts.polishPromptZh, appContextThemeEn, appContextThemeZh]);
 
-  const handleImageGenerated = useCallback((image: GeneratedImage, engine: ImageEngine) => {
-    const currentPromptState: PromptStateForHistory = { selectedStyleId: selectedStyle?.id || null, selectedRoomTypeId: selectedRoomType?.id || null, activeTerms: Array.from(activePromptTerms.entries()) };
-    const historyEntry: ImageHistoryEntry = { ...image, timestamp: Date.now(), promptState: currentPromptState, engine };
-    setImageHistory(prev => [historyEntry, ...prev.slice(0, 19)]); 
-  }, [selectedStyle, selectedRoomType, activePromptTerms]);
+  const effectivePromptEn = isPromptEnManual ? manualPromptEn : autoGeneratedPromptEn;
+  const effectivePromptZh = isPromptZhManual ? manualPromptZh : autoGeneratedPromptZh;
+
+
+  const handleImageGenerated = useCallback((
+    image: AppGeneratedImage,
+    engine: ImageEngine,
+    editBaseImageId?: string, 
+    editInstruction?: string, 
+    fusionData?: any 
+  ) => {
+    const currentPromptState: PromptStateForHistory = {
+        selectedStyleId: selectedStyle?.id || null,
+        selectedRoomTypeId: selectedRoomType?.id || null,
+        activeTerms: Array.from(activePromptTerms.entries()),
+        subjectInputEn: subjectInputEn,
+        subjectInputZh: subjectInputZh,
+        
+        manualPromptEn: isPromptEnManual ? manualPromptEn : undefined,
+        manualPromptZh: isPromptZhManual ? manualPromptZh : undefined,
+    };
+    const historyEntry: ImageHistoryEntry = {
+        ...image, 
+        timestamp: Date.now(),
+        promptState: currentPromptState,
+        engine,
+        isFavorite: false, 
+        editBaseImageId, 
+        editInstruction, 
+        fusionParams: fusionData, 
+    };
+    setImageHistory(prev => [historyEntry, ...prev.slice(0, 19)]);
+  }, [selectedStyle, selectedRoomType, activePromptTerms, subjectInputEn, subjectInputZh, isPromptEnManual, manualPromptEn, isPromptZhManual, manualPromptZh]);
+
 
   const handleRestorePromptState = useCallback((historyEntry: ImageHistoryEntry) => {
-    const styleToRestore = userDesignStyles.find(s => s.id === historyEntry.promptState.selectedStyleId) || null;
-    const roomTypeToRestore = ROOM_TYPES.find(r => r.id === historyEntry.promptState.selectedRoomTypeId) || null;
+    const styleToRestore = designStyles.find(s => s.id === historyEntry.promptState.selectedStyleId) || null;
+    const roomTypeToRestore = roomTypes.find(r => r.id === historyEntry.promptState.selectedRoomTypeId) || null;
     setSelectedStyle(styleToRestore);
     setSelectedRoomType(roomTypeToRestore);
     setActivePromptTerms(new Map(historyEntry.promptState.activeTerms));
-    window.scrollTo({ top: 0, behavior: 'smooth' }); 
-  }, [userDesignStyles]);
 
-  const handleOpenImageDetail = (item: ImageHistoryEntry | GeneratedImage) => {
-    const isHistoryEntry = 'timestamp' in item;
-    if (isHistoryEntry) {
-        const entry = item as ImageHistoryEntry;
-        const index = imageHistory.findIndex(histEntry => histEntry.id === entry.id);
-        setSelectedImageForModal(entry);
-        setSelectedImageIndex(index !== -1 ? index : 0);
-    } else { 
-        const latestInHistory = imageHistory.length > 0 && imageHistory[0].id === item.id ? imageHistory[0] : null;
-        if (latestInHistory) { setSelectedImageForModal(latestInHistory); setSelectedImageIndex(0); }
-        else { setSelectedImageForModal(item as GeneratedImage); setSelectedImageIndex(null); }
+    setSubjectInputEn(historyEntry.promptState.subjectInputEn || '');
+    setSubjectInputZh(historyEntry.promptState.subjectInputZh || '');
+    setIsSubjectInputEnabled(!!(historyEntry.promptState.subjectInputEn || historyEntry.promptState.subjectInputZh));
+
+    if (roomTypeToRestore) setIsRoomTypeSelectorEnabled(true);
+
+    
+    if (historyEntry.promptState.manualPromptEn !== undefined) {
+        setManualPromptEn(historyEntry.promptState.manualPromptEn);
+        setIsPromptEnManual(true);
+    } else {
+        setIsPromptEnManual(false); 
     }
+    if (historyEntry.promptState.manualPromptZh !== undefined) {
+        setManualPromptZh(historyEntry.promptState.manualPromptZh);
+        setIsPromptZhManual(true);
+    } else {
+        setIsPromptZhManual(false); 
+    }
+
+    setCurrentView('main'); 
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [designStyles, roomTypes]);
+
+  const handleOpenImageDetail = (item: ImageHistoryEntry, sourceList: ImageHistoryEntry[]) => {
+    const indexInSource = sourceList.findIndex(entry => entry.id === item.id);
+    setSelectedImageForModal(item);
+    setModalImageSourceList(sourceList);
+    setSelectedImageIndexInSource(indexInSource !== -1 ? indexInSource : null);
   };
-  
-  const handleViewImageFromGenerator = (generatedImage: GeneratedImage) => {
+
+  const handleViewImageFromGenerator = (generatedImage: AppGeneratedImage) => {
     const historyEntry = imageHistory.find(entry => entry.id === generatedImage.id);
-    if (historyEntry) handleOpenImageDetail(historyEntry);
-    else { setSelectedImageForModal(generatedImage); setSelectedImageIndex(null); }
+    if (historyEntry) {
+        handleOpenImageDetail(historyEntry, imageHistory);
+    } else {
+        const tempEntry: ImageHistoryEntry = {
+            ...generatedImage,
+            timestamp: Date.now(),
+            promptState: { 
+                selectedStyleId: selectedStyle?.id || null,
+                selectedRoomTypeId: selectedRoomType?.id || null,
+                activeTerms: Array.from(activePromptTerms.entries()),
+                subjectInputEn, subjectInputZh,
+                manualPromptEn: isPromptEnManual ? manualPromptEn : undefined,
+                manualPromptZh: isPromptZhManual ? manualPromptZh : undefined,
+            },
+            engine: 'gemini', 
+            isFavorite: false,
+        };
+        setSelectedImageForModal(tempEntry);
+        setModalImageSourceList([tempEntry]); 
+        setSelectedImageIndexInSource(0);
+    }
   };
 
   const handleNavigateImageDetail = (direction: 'prev' | 'next') => {
-    if (selectedImageIndex === null || !selectedImageForModal || !('timestamp' in selectedImageForModal)) return;
-    let newIndex = selectedImageIndex;
-    if (direction === 'prev') newIndex = Math.max(0, selectedImageIndex - 1);
-    else newIndex = Math.min(imageHistory.length - 1, selectedImageIndex + 1);
-    if (newIndex !== selectedImageIndex) { setSelectedImageIndex(newIndex); setSelectedImageForModal(imageHistory[newIndex]); }
+    if (selectedImageIndexInSource === null || modalImageSourceList.length === 0) return;
+    let newIndex = selectedImageIndexInSource;
+    if (direction === 'prev') newIndex = Math.max(0, selectedImageIndexInSource - 1);
+    else newIndex = Math.min(modalImageSourceList.length - 1, selectedImageIndexInSource + 1);
+    if (newIndex !== selectedImageIndexInSource) {
+      setSelectedImageIndexInSource(newIndex);
+      setSelectedImageForModal(modalImageSourceList[newIndex]);
+    }
   };
 
-  const scrollToImageGenerator = () => rightColumnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+  const handleClearHistory = useCallback(() => { 
+    if (window.confirm("您確定要清除所有圖像生成歷史嗎？此操作無法復原。")) {
+      setImageHistory([]);
+    }
+  }, []);
+
+  const handleToggleFavoriteImage = useCallback((imageId: string) => {
+    setImageHistory(prev =>
+      prev.map(entry =>
+        entry.id === imageId ? { ...entry, isFavorite: !entry.isFavorite } : entry
+      )
+    );
+  }, []);
+
+  const favoritedImages = useMemo(() => imageHistory.filter(entry => entry.isFavorite), [imageHistory]);
+
+  const handleOpenMultimodalEditModal = useCallback((image: ImageHistoryEntry) => {
+    setMultimodalEditBaseImage(image);
+    setShowMultimodalEditModal(true);
+  }, []);
+
+  const handleOpenImageFusionStudio = useCallback((image: ImageHistoryEntry) => { 
+    setImageFusionStudioBaseImage(image);
+    setShowImageFusionStudioModal(true);
+  }, []);
+
+
+  const handleOpenMultimodalEditFromAnalyzer = useCallback((imageSrc: string, imageFile: File | null, keywords: AnalyzedImageKeyword[] | null) => {
+    if (!imageSrc) return;
+    const tempHistoryEntry: ImageHistoryEntry = {
+      id: `analyzer-img-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      src: imageSrc,
+      prompt: imageFile ? `Uploaded: ${imageFile.name}` : 'Image from gallery',
+      timestamp: Date.now(),
+      promptState: { 
+        selectedStyleId: selectedStyle?.id || null,
+        selectedRoomTypeId: selectedRoomType?.id || null,
+        activeTerms: Array.from(activePromptTerms.entries()),
+        subjectInputEn: subjectInputEn,
+        subjectInputZh: subjectInputZh,
+        manualPromptEn: isPromptEnManual ? manualPromptEn : undefined,
+        manualPromptZh: isPromptZhManual ? manualPromptZh : undefined,
+      },
+      engine: 'gemini', 
+      isFavorite: false,
+    };
+    setMultimodalEditBaseImage(tempHistoryEntry);
+    setMultimodalEditInitialKeywords(keywords); 
+    setShowMultimodalEditModal(true);
+  }, [selectedStyle, selectedRoomType, activePromptTerms, subjectInputEn, subjectInputZh, isPromptEnManual, manualPromptEn, isPromptZhManual, manualPromptZh]);
+
+  const handleOpenImageFusionStudioFromAnalyzer = useCallback((imageSrc: string, imageFile: File | null) => {
+    if (!imageSrc) return;
+     const tempHistoryEntry: ImageHistoryEntry = {
+      id: `analyzer-fusion-img-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      src: imageSrc,
+      prompt: imageFile ? `Fusion base: ${imageFile.name}` : 'Fusion base from gallery',
+      timestamp: Date.now(),
+      promptState: { 
+        selectedStyleId: selectedStyle?.id || null,
+        selectedRoomTypeId: selectedRoomType?.id || null,
+        activeTerms: Array.from(activePromptTerms.entries()),
+        subjectInputEn: subjectInputEn,
+        subjectInputZh: subjectInputZh,
+        manualPromptEn: isPromptEnManual ? manualPromptEn : undefined,
+        manualPromptZh: isPromptZhManual ? manualPromptZh : undefined,
+      },
+      engine: 'fluxKontextMax', 
+      isFavorite: false,
+    };
+    setImageFusionStudioBaseImage(tempHistoryEntry);
+    setShowImageFusionStudioModal(true);
+  }, [selectedStyle, selectedRoomType, activePromptTerms, subjectInputEn, subjectInputZh, isPromptEnManual, manualPromptEn, isPromptZhManual, manualPromptZh]);
+
+
+  const scrollToImageGenerator = () => imageGeneratorColumnRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   const toggleSettingsModal = () => setShowSettingsModal(prev => !prev);
   const toggleAddStyleModal = () => setShowAddStyleModal(prev => !prev);
+  const toggleAddRoomTypeModal = () => setShowAddRoomTypeModal(prev => !prev);
+  const toggleAddCategoryModal = () => setShowAddCategoryModal(prev => !prev); 
 
-  const toggleAddCustomTermModal = useCallback((categoryId?: string, categoryName?: string) => {
-    if (categoryId && categoryName) setCurrentCategoryForCustomTerm({id: categoryId, name: categoryName});
-    else setCurrentCategoryForCustomTerm(null);
-    setShowAddCustomTermModal(prev => !prev);
+
+  const handleOpenAddCustomTermFromCategoryModal = useCallback((categoryId: string, categoryName: string) => {
+    setAddCustomTermModalConfig({
+      isOpen: true,
+      initialData: { preselectCategoryId: categoryId, categoryNameForDisplay: categoryName },
+      showCategorySelector: false,
+      modalTitleKey: 'addCustomTermModalTitle',
+    });
   }, []);
+
+  const handleOpenQuickAddTermModal = useCallback((initialEn: string, initialZh: string) => {
+    setAddCustomTermModalConfig({
+      isOpen: true,
+      initialData: { termEn: initialEn, termZh: initialZh },
+      showCategorySelector: true,
+      modalTitleKey: 'addCustomTermModalQuickAddTitle',
+    });
+  }, []);
+
+  const handleOpenSaveTermModal = useCallback((termToSave: SelectedPromptTerm) => {
+    setAddCustomTermModalConfig({
+      isOpen: true,
+      initialData: {
+        termId: termToSave.id,
+        termEn: termToSave.termEn,
+        termZh: termToSave.termZh,
+        preselectCategoryId: termToSave.categoryId, 
+      },
+      showCategorySelector: true, 
+      modalTitleKey: 'saveTermToCategoryModalTitle',
+    });
+  }, []);
+
+  const handleSaveModalData = useCallback((data: AddCustomTermModalOnSaveData) => {
+    const isQuickAddMode = addCustomTermModalConfig.modalTitleKey === 'addCustomTermModalQuickAddTitle';
+
+    if (isQuickAddMode) {
+        if (data.selectedCategoryId === DESIGN_STYLE_QUICK_ADD_CATEGORY_ID) {
+            const newStyle: DesignStyle = {
+                id: `custom_style_quick_${Date.now()}`,
+                nameEn: data.termEn,
+                nameZh: data.termZh,
+                basePromptEn: `${data.termEn} style`, 
+                basePromptZh: `${data.termZh}風格`,  
+                relatedCategories: Object.keys(customPromptCategorySettings || DEFAULT_CUSTOM_PROMPT_CATEGORY_SETTINGS), 
+                isCustom: true,
+                descriptionEn: '', descriptionZh: '',
+                dynamicDetails: [ 
+                    { labelEn: "Suggested Details 1", labelZh: "建議細節 1", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) },
+                    { labelEn: "Suggested Details 2", labelZh: "建議細節 2", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) }
+                ]
+            };
+            contextAddDesignStyle(newStyle);
+            setSelectedStyle(newStyle); 
+            setShowStyleDetails(true); 
+        } else if (data.selectedCategoryId === ROOM_TYPE_QUICK_ADD_CATEGORY_ID) {
+            const newRoomType: PromptTerm = {
+                id: `custom_roomtype_quick_${Date.now()}`,
+                termEn: data.termEn,
+                termZh: data.termZh,
+                isCustom: true,
+            };
+            contextAddRoomType(newRoomType);
+            setSelectedRoomType(newRoomType); 
+            setIsRoomTypeSelectorEnabled(true); 
+        } else {
+            const newTermId = `custom_term_quick_${data.selectedCategoryId}_${Date.now()}`;
+            const newTerm: PromptTerm = {
+                id: newTermId,
+                termEn: data.termEn,
+                termZh: data.termZh,
+                categoryId: data.selectedCategoryId,
+                isCustom: true
+            };
+            contextAddTermToCategory(newTerm, data.selectedCategoryId);
+            toggleTerm(newTerm, data.selectedCategoryId); 
+        }
+    } else { 
+        const originalTermInActive = data.termIdToUpdate ? activePromptTerms.get(data.termIdToUpdate) : null;
+        const isOriginalTermManagedInSettings = data.termIdToUpdate
+          ? processedPromptCategories.some(category =>
+              category.terms.some(catTerm => catTerm.id === data.termIdToUpdate)
+            )
+          : false;
+
+        if (data.termIdToUpdate && originalTermInActive && !isOriginalTermManagedInSettings) {
+          const newCustomTermId = `custom_saved_${originalTermInActive.id.replace(/[^a-z0-9_]/gi, '')}_${Date.now()}`;
+          const newCustomTerm: PromptTerm = {
+            id: newCustomTermId,
+            termEn: data.termEn, 
+            termZh: data.termZh, 
+            categoryId: data.selectedCategoryId,
+            isCustom: true,
+          };
+          contextAddTermToCategory(newCustomTerm, data.selectedCategoryId);
+          setActivePromptTerms(prevActiveTerms => {
+            const newActiveTerms = new Map(prevActiveTerms);
+            newActiveTerms.delete(data.termIdToUpdate!); 
+            newActiveTerms.set(newCustomTermId, {
+              ...newCustomTerm, 
+              weight: originalTermInActive.weight || 1.0,
+              locked: originalTermInActive.locked || false,
+              order: originalTermInActive.order || getNextOrderBasedOnMap(newActiveTerms),
+            });
+            return newActiveTerms;
+          });
+        } else if (data.termIdToUpdate && isOriginalTermManagedInSettings) {
+          const newOrUpdatedTermId = contextUpdateTermDefinition(
+            data.termIdToUpdate,
+            { termEn: data.termEn, termZh: data.termZh, isCustom: true }, 
+            data.selectedCategoryId 
+          );
+          if (newOrUpdatedTermId) {
+            setActivePromptTerms(prevActiveTerms => {
+              const newActiveTerms = new Map(prevActiveTerms);
+              const originalTermData = newActiveTerms.get(data.termIdToUpdate!);
+              if (newOrUpdatedTermId !== data.termIdToUpdate) { 
+                newActiveTerms.delete(data.termIdToUpdate!);
+                const newTermDetailsFromContext = processedPromptCategories
+                    .flatMap(cat => cat.terms)
+                    .find(t => t.id === newOrUpdatedTermId);
+                if (newTermDetailsFromContext) {
+                     newActiveTerms.set(newOrUpdatedTermId, {
+                        ...newTermDetailsFromContext,
+                        weight: originalTermData?.weight || 1.0,
+                        locked: originalTermData?.locked || false,
+                        order: originalTermData?.order || getNextOrderBasedOnMap(newActiveTerms),
+                     });
+                }
+              } else { 
+                if (originalTermData) {
+                  newActiveTerms.set(newOrUpdatedTermId, {
+                    ...originalTermData,
+                    termEn: data.termEn,
+                    termZh: data.termZh,
+                    categoryId: data.selectedCategoryId, 
+                    isCustom: true, 
+                  });
+                }
+              }
+              return newActiveTerms;
+            });
+          } else {
+            alert("儲存詞語時發生錯誤，詞語未被找到或更新失敗。");
+          }
+        } else {
+          const newTermId = `custom_term_${data.selectedCategoryId}_${Date.now()}_${Math.random().toString(36).substring(2,7)}`;
+          const newTerm: PromptTerm = {
+            id: newTermId,
+            termEn: data.termEn,
+            termZh: data.termZh,
+            categoryId: data.selectedCategoryId,
+            isCustom: true
+          };
+          contextAddTermToCategory(newTerm, data.selectedCategoryId);
+        }
+    }
+    setAddCustomTermModalConfig(prev => ({ ...prev, isOpen: false }));
+  }, [
+      contextAddTermToCategory,
+      contextUpdateTermDefinition,
+      contextAddDesignStyle,
+      contextAddRoomType,
+      toggleTerm,
+      setActivePromptTerms,
+      getNextOrderBasedOnMap,
+      processedPromptCategories, 
+      customPromptCategorySettings, 
+      addCustomTermModalConfig.modalTitleKey,
+      activePromptTerms,
+  ]);
+
 
   const handleAddCustomStyle = (nameEn: string, nameZh: string) => {
-    const newStyle: DesignStyle = { id: `custom_style_${Date.now()}`, nameEn, nameZh, descriptionEn: '', descriptionZh: '', furnitureBrandsEn: [], furnitureBrandsZh: [], decorTipsEn: [], decorTipsZh: [], basePromptEn: `${nameEn} style`, basePromptZh: `${nameZh}風格`, relatedCategories: INITIAL_PROMPT_CATEGORIES.map(cat => cat.id), isCustom: true };
-    setUserDesignStyles(prev => [newStyle, ...prev]);
-    setSelectedStyle(newStyle);
-    setShowStyleDetails(true);
+    const newStyle: DesignStyle = {
+      id: `custom_style_${Date.now()}`,
+      nameEn, nameZh,
+      descriptionEn: '', descriptionZh: '', 
+      dynamicDetails: [ 
+        { labelEn: "Suggested Details 1", labelZh: "建議細節 1", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) },
+        { labelEn: "Suggested Details 2", labelZh: "建議細節 2", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) }
+      ],
+      basePromptEn: `${nameEn} style`, 
+      basePromptZh: `${nameZh}風格`,  
+      relatedCategories: Object.keys(customPromptCategorySettings || DEFAULT_CUSTOM_PROMPT_CATEGORY_SETTINGS), 
+      isCustom: true
+    };
+    contextAddDesignStyle(newStyle);
+    setSelectedStyle(newStyle); 
+    setShowStyleDetails(true); 
   };
 
-  const handleAddCustomTerm = useCallback((termEn: string, termZh: string, categoryId: string) => {
-    const newTerm: PromptTerm = { id: `custom_term_${categoryId}_${Date.now()}`, termEn, termZh, categoryId, isCustom: true };
-    setUserCustomTerms(prev => [...prev, newTerm]);
-  }, []);
+  const handleAddCustomRoomType = (termEn: string, termZh: string) => {
+    const newRoomType: PromptTerm = {
+      id: `custom_roomtype_${Date.now()}`,
+      termEn,
+      termZh,
+      isCustom: true,
+    };
+    contextAddRoomType(newRoomType);
+    setSelectedRoomType(newRoomType); 
+    setIsRoomTypeSelectorEnabled(true); 
+  };
 
   const handleTranslateInputForModal = useCallback(async (textToTranslate: string, targetLanguage: 'en' | 'zh'): Promise<string | null> => {
     if (!ai) { console.error("Gemini AI client not available for translation."); return null; }
-    
-    let prompt = '';
-    if (targetLanguage === 'en') {
-      prompt = `Translate the following Traditional Chinese interior design keyword/phrase to its concise English equivalent. Return only the English translation, without any explanations or quotation marks. Input: "${textToTranslate}" Output:`;
-    } else { // targetLanguage === 'zh'
-      prompt = `Translate the following English interior design keyword/phrase to its concise Traditional Chinese equivalent. Return only the Traditional Chinese translation, without any explanations or quotation marks. Input: "${textToTranslate}" Output:`;
+    const promptTemplateDetails = targetLanguage === 'en' ? aiSystemPrompts.translateToEnglish : aiSystemPrompts.translateToChinese;
+     if (!promptTemplateDetails || !promptTemplateDetails.template) {
+        console.error(`Translation prompt template for ${targetLanguage} not found.`);
+        throw new Error(`Translation prompt template for ${targetLanguage} not found.`);
     }
-
+    const prompt = fillPromptTemplate(promptTemplateDetails.template, { textToTranslate });
     try {
       const response: GeminiGenerateContentResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash-preview-04-17', contents: prompt });
       return response.text.trim();
     } catch (e: any) { console.error("Error translating with AI:", e); throw e; }
-  }, [ai]);
+  }, [ai, aiSystemPrompts.translateToEnglish, aiSystemPrompts.translateToChinese]); 
 
 
   const handleGenerateStyleDetailsWithAI = useCallback(async () => {
     if (!ai || !selectedStyle) { setStyleDetailsAIError("請先選擇一個風格。"); return; }
-    setIsLoadingStyleDetailsAI(true); setStyleDetailsAIError(null);
-    const prompt = `您是一位專業的室內設計風格分析師。針對設計風格：「${selectedStyle.nameEn} / ${selectedStyle.nameZh}」，請提供以下詳細資訊。風格基礎提示詞：「${selectedStyle.basePromptEn}」 / 「${selectedStyle.basePromptZh}」。請嚴格按照以下JSON物件格式返回資訊，不含任何額外文字或Markdown：{ "descriptionEn": "Detailed English description, 50-80 words.", "descriptionZh": "詳細繁中描述, 約50-80字。", "furnitureBrandsEn": ["Brand1", "Brand2", "Brand3"], "furnitureBrandsZh": ["品牌1", "品牌2", "品牌3"], "decorTipsEn": ["Tip1", "Tip2", "Tip3"], "decorTipsZh": ["技巧1", "技巧2", "技巧3"] }。確保每個陣列剛好三個項目，且中英文對應。`;
+    if (!settingsContext) { setStyleDetailsAIError("設定組件載入失敗。"); return; }
+    if (styleDetailsThinkingIntervalRef.current) clearInterval(styleDetailsThinkingIntervalRef.current);
+    setIsLoadingStyleDetailsAI(true);
+    setStyleDetailsAIError(null);
+    
+    const industryContextForAI = appContextThemeZh || appContextThemeEn || "室內設計"; // Prioritize Zh for display in thinking
+    const steps = [
+        `分析風格主旨: ${selectedStyle.nameEn} / ${selectedStyle.nameZh}`,
+        `考量產業主題: ${industryContextForAI}`,
+        `AI 正在為「${selectedStyle.nameZh}」風格生成專屬描述...`,
+        `AI 根據描述和主題「${industryContextForAI.substring(0,10)}...」構思兩組動態標籤...`,
+        `AI 為動態標籤生成對應的提示詞建議...`,
+        "整合所有專業見解...",
+        "準備JSON格式化輸出...",
+        "即將完成風格詳細資料生成！",
+    ];
+    setStyleDetailsThinkingMessages(steps);
+    setCurrentStyleDetailsThinkingIndex(0);
+    styleDetailsThinkingIntervalRef.current = window.setInterval(() => {
+        setCurrentStyleDetailsThinkingIndex(prevIndex => {
+            if (prevIndex < steps.length - 1) return prevIndex + 1;
+            if (styleDetailsThinkingIntervalRef.current) clearInterval(styleDetailsThinkingIntervalRef.current);
+            styleDetailsThinkingIntervalRef.current = null;
+            return prevIndex;
+        });
+    }, 1200);
+    const promptTemplate = aiSystemPrompts.styleDetails.template;
+    const prompt = fillPromptTemplate(promptTemplate, {
+        styleNameEn: selectedStyle.nameEn,
+        styleNameZh: selectedStyle.nameZh,
+        basePromptEn: selectedStyle.basePromptEn,
+        basePromptZh: selectedStyle.basePromptZh,
+        industryContext: appContextThemeZh || appContextThemeEn || "室內設計", // Pass combined or preferred
+    });
     try {
       const response: GeminiGenerateContentResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash-preview-04-17', contents: prompt, config: { responseMimeType: "application/json" } });
+      if (styleDetailsThinkingIntervalRef.current) clearInterval(styleDetailsThinkingIntervalRef.current);
+      styleDetailsThinkingIntervalRef.current = null;
       const parsedDetails = parseGeminiJsonResponse<AIStyleDetails>(response.text);
-      if (parsedDetails && typeof parsedDetails.descriptionEn === 'string' && typeof parsedDetails.descriptionZh === 'string' && Array.isArray(parsedDetails.furnitureBrandsEn) && Array.isArray(parsedDetails.furnitureBrandsZh) && Array.isArray(parsedDetails.decorTipsEn) && Array.isArray(parsedDetails.decorTipsZh) && parsedDetails.furnitureBrandsEn.every(item => typeof item === 'string') && parsedDetails.furnitureBrandsZh.every(item => typeof item === 'string') && parsedDetails.decorTipsEn.every(item => typeof item === 'string') && parsedDetails.decorTipsZh.every(item => typeof item === 'string') && parsedDetails.furnitureBrandsEn.length === 3 && parsedDetails.decorTipsEn.length === 3) {
-        setUserDesignStyles(prevStyles => prevStyles.map(style => style.id === selectedStyle.id ? { ...style, ...parsedDetails } : style));
-        setSelectedStyle(prevSelStyle => prevSelStyle ? { ...prevSelStyle, ...parsedDetails } : null);
-      } else { setStyleDetailsAIError("AI返回的資料格式不完整、不符預期或陣列項目數量不正確。"); console.error("AI生成的風格詳細資料格式錯誤:", parsedDetails, "原始文本:", response.text); }
-    } catch (e: any) { console.error("使用AI生成風格詳細資訊時出錯:", e); setStyleDetailsAIError(`生成失敗：${e.message || '未知錯誤'}`); }
+      const validateDynamicDetailSet = (detailSet?: DynamicDetailSet): boolean => 
+        !!(detailSet && typeof detailSet.labelEn === 'string' && detailSet.labelEn.trim() !== '' && typeof detailSet.labelZh === 'string' && detailSet.labelZh.trim() !== '' && Array.isArray(detailSet.termsEn) && detailSet.termsEn.length === 3 && detailSet.termsEn.every(item => typeof item === 'string' && item.trim() !== '') && Array.isArray(detailSet.termsZh) && detailSet.termsZh.length === 3 && detailSet.termsZh.every(item => typeof item === 'string' && item.trim() !== ''));
+      
+      if (parsedDetails && 
+          typeof parsedDetails.descriptionEn === 'string' && 
+          typeof parsedDetails.descriptionZh === 'string' &&
+          validateDynamicDetailSet(parsedDetails.dynamicDetail1) &&
+          validateDynamicDetailSet(parsedDetails.dynamicDetail2)) { 
+        const detailsToUpdate: Partial<Pick<DesignStyle, 'descriptionEn' | 'descriptionZh' | 'dynamicDetails'>> = {
+            descriptionEn: parsedDetails.descriptionEn,
+            descriptionZh: parsedDetails.descriptionZh,
+            dynamicDetails: [parsedDetails.dynamicDetail1, parsedDetails.dynamicDetail2],
+        };
+        contextUpdateDesignStyle(selectedStyle.id, detailsToUpdate);
+        setSelectedStyle(prevSelStyle => prevSelStyle ? { ...prevSelStyle, ...detailsToUpdate } : null);
+      } else { 
+        setStyleDetailsAIError("AI返回的資料格式不完整、不符預期或陣列項目數量不正確。"); 
+        console.error("AI生成的風格詳細資料格式錯誤:", parsedDetails, "原始文本:", response.text); 
+      }
+    } catch (e: any) {
+        if (styleDetailsThinkingIntervalRef.current) clearInterval(styleDetailsThinkingIntervalRef.current);
+        styleDetailsThinkingIntervalRef.current = null;
+        console.error("使用AI生成風格詳細資訊時出錯:", e); setStyleDetailsAIError(`生成失敗：${e.message || '未知錯誤'}`);
+    }
     finally { setIsLoadingStyleDetailsAI(false); }
-  }, [ai, selectedStyle]);
+  }, [ai, selectedStyle, appContextThemeEn, appContextThemeZh, aiSystemPrompts.styleDetails, contextUpdateDesignStyle, settingsContext]); 
 
   const handleTranslateNameToEnglish = useCallback(async (nameZh: string): Promise<string | null> => {
     if (!ai) { console.error("Gemini AI client not available for translation."); return null; }
-    const prompt = `Translate the following Traditional Chinese interior design style name to English. Return only the concise English name, without any explanations or quotation marks. Input: "${nameZh}" Output:`;
+    const promptTemplate = aiSystemPrompts.translateStyleNameToEnglish.template;
+    const prompt = fillPromptTemplate(promptTemplate, { nameZh });
     try {
       const response: GeminiGenerateContentResponse = await ai.models.generateContent({ model: 'gemini-2.5-flash-preview-04-17', contents: prompt });
       return response.text.trim();
     } catch (e: any) { console.error("Error translating name with AI:", e); throw e; }
-  }, [ai]);
+  }, [ai, aiSystemPrompts.translateStyleNameToEnglish]); 
 
   const handleRandomizeAllPrompts = useCallback(async () => {
-    if (!ai || !selectedStyle || !selectedRoomType) {
-      setRandomPromptsError("請先選擇風格和空間類型才能隨機選詞。");
+    if (!ai || !selectedStyle || (!selectedRoomType && isRoomTypeSelectorEnabled)) { 
+      setRandomPromptsError("請先選擇風格 (若空間類型已啟用，亦需選擇空間類型) 才能隨機選詞。");
       return;
     }
     setIsLoadingRandomPrompts(true);
@@ -419,16 +1404,19 @@ const AppContent: React.FC = () => {
     }
 
     const termsListForPrompt = allRelevantTermsFromCategories.map(t => `- ${t.termEn} / ${t.termZh} (ID: ${t.id})`).join('\n');
-    const prompt = `You are an AI assistant for interior design prompt generation.
-Current Style: ${selectedStyle.nameEn} / ${selectedStyle.nameZh}
-Room Type: ${selectedRoomType.termEn} / ${selectedRoomType.termZh}
-Available prompt terms (with IDs):
-${termsListForPrompt}
+    const roomTypeEnForPrompt = (selectedRoomType && isRoomTypeSelectorEnabled) ? selectedRoomType.termEn : "Not specified";
+    const roomTypeZhForPrompt = (selectedRoomType && isRoomTypeSelectorEnabled) ? selectedRoomType.termZh : "未指定";
 
-Based on the style and room type, please select 5 to 7 diverse and complementary term IDs from the list above that would create a great interior design image.
-Prioritize terms that are highly characteristic of the style or offer unique details.
-Return a JSON array of selected term IDs, like: ["id1", "id2", "id3", "id4", "id5"].
-Ensure the output is only the JSON array.`;
+    const promptTemplate = aiSystemPrompts.randomPromptSelection.template;
+    const prompt = fillPromptTemplate(promptTemplate, {
+        styleNameEn: selectedStyle.nameEn,
+        styleNameZh: selectedStyle.nameZh,
+        roomTypeEn: roomTypeEnForPrompt,
+        roomTypeZh: roomTypeZhForPrompt,
+        availableTermsList: termsListForPrompt,
+        appContextThemeEn: appContextThemeEn || "Interior Design",
+        appContextThemeZh: appContextThemeZh || "室內設計",
+    });
 
     try {
       const response: GeminiGenerateContentResponse = await ai.models.generateContent({
@@ -441,32 +1429,23 @@ Ensure the output is only the JSON array.`;
       if (suggestedTermIds && Array.isArray(suggestedTermIds) && suggestedTermIds.every(id => typeof id === 'string')) {
         setActivePromptTerms(prevTerms => {
           const newTerms = new Map<string, SelectedPromptTerm>();
-          // Preserve locked terms
-          prevTerms.forEach((term, id) => {
-            if (term.locked) {
-              newTerms.set(id, term);
-            }
-          });
-          
-          let orderOffset = (newTerms.size > 0 ? Math.max(...Array.from(newTerms.values()).map(t => t.order)) : 0) + 1;
-
+          prevTerms.forEach((term, id) => { if (term.locked) newTerms.set(id, term); });
+          let nextOrder = getNextOrderBasedOnMap(newTerms); 
           suggestedTermIds.forEach(idToActivate => {
-            if (!newTerms.has(idToActivate)) { // Don't re-add if it was locked and already present
-              const termDefinition = allRelevantTermsFromCategories.find(t => t.id === idToActivate);
+            if (!newTerms.has(idToActivate)) { 
+              const termDefinition = processedPromptCategories.flatMap(cat => cat.terms).find(t => t.id === idToActivate);
               if (termDefinition) {
-                 const categoryOfTerm = userPromptCategories.find(cat => cat.terms.some(t => t.id === idToActivate));
-                 newTerms.set(idToActivate, { 
-                    ...termDefinition, 
-                    weight: 1.0, 
-                    locked: false, 
-                    categoryId: categoryOfTerm?.id || 'unknown', // Find actual categoryId
-                    order: orderOffset++ 
+                 newTerms.set(idToActivate, {
+                    ...termDefinition, weight: 1.0, locked: false,
+                    categoryId: termDefinition.categoryId || 'unknown', 
+                    order: nextOrder++
                 });
               }
             }
           });
           return newTerms;
         });
+        setIsPromptEnManual(false); setIsPromptZhManual(false); 
       } else {
         setRandomPromptsError("AI 返回的隨機選詞建議格式不正確。");
         console.error("AI隨機選詞建議格式錯誤:", suggestedTermIds, "原始文本:", response.text);
@@ -477,147 +1456,1078 @@ Ensure the output is only the JSON array.`;
     } finally {
       setIsLoadingRandomPrompts(false);
     }
-  }, [ai, selectedStyle, selectedRoomType, relevantCategories, userPromptCategories]);
+  }, [ai, selectedStyle, selectedRoomType, isRoomTypeSelectorEnabled, relevantCategories, processedPromptCategories, aiSystemPrompts.randomPromptSelection, getNextOrderBasedOnMap, appContextThemeEn, appContextThemeZh]); 
 
+  const handleKeywordsExtractedFromAnalyzer = useCallback((keywords: AnalyzedImageKeyword[]) => {
+      setLastAnalyzedKeywords(keywords);
+  }, []);
 
-  // Check if at least one API key is available
-  const atLeastOneApiKeyConfigured = geminiApiKey || bflAIApiKey;
-
-  if (!atLeastOneApiKeyConfigured && (typeof process.env.API_KEY === 'undefined' && typeof process.env.BFL_API_KEY === 'undefined')) {
-    // This condition might be too strict if env-config.js hasn't loaded yet.
-    // The console.log above will show if keys are 'Not Loaded' due to timing or actual absence.
-    // The key check in ImageGenerator is more practical for enabling/disabling features.
-    // This top-level check is for a catastrophic "no keys at all were even attempted to be loaded"
-    // which shouldn't happen if env-config.js is correctly sourced.
-    // A better check is if all are explicitly empty string after env-config.js attempted load.
-    
-    // If env-config.js has run, process.env.API_KEY etc will exist, even if as empty strings.
-    // So if they are *still* undefined, env-config.js probably didn't run.
-    const envConfigLikelyNotRun = typeof process.env.API_KEY === 'undefined' && 
-                                  typeof process.env.BFL_API_KEY === 'undefined';
-    
-    // Only show the blocking error if env-config.js likely didn't run OR if it ran and all keys are still effectively null/empty.
-    // The individual components will disable themselves if their specific key is missing.
-    // This screen is for when *no* keys are available at all from the environment.
-    const allKeysEffectivelyMissing = !geminiApiKey && !bflAIApiKey;
-
-
-    if (allKeysEffectivelyMissing) {
-         return (
-          <div className="flex items-center justify-center h-screen bg-white">
-            <div className="p-8 bg-white shadow-xl rounded-lg text-center">
-              <h1 className="text-2xl font-bold text-gray-800 mb-4">API 金鑰錯誤</h1>
-              <p className="text-gray-700">任何 AI 服務的 API 金鑰均未設定。</p>
-              <p className="text-gray-600 mt-2 text-sm">請確保下列至少一個環境變數已設定（通常在 <code className="bg-gray-200 p-0.5 rounded text-xs">env-config.js</code> 或伺服器環境中）：</p>
-              <ul className="text-gray-600 mt-1 text-xs list-disc list-inside">
-                <li><code className="bg-gray-200 p-1 rounded">process.env.API_KEY</code> (Gemini)</li>
-                <li><code className="bg-gray-200 p-1 rounded">process.env.BFL_API_KEY</code> (BFL.ai)</li>
-              </ul>
-              {envConfigLikelyNotRun && <p className="text-red-500 text-xs mt-3">注意：<code className="bg-gray-200 p-0.5 rounded text-xs">env-config.js</code> 可能未正確載入。</p>}
-            </div>
-          </div>
-        );
+  const handleAddAnalyzedKeywordToActivePrompt = useCallback((keyword: AnalyzedImageKeyword) => {
+    const termEnLower = (keyword.termEn || "").toLowerCase().trim();
+    const termZhLower = (keyword.termZh || "").toLowerCase().trim();
+    if (!termEnLower && !termZhLower) return; 
+    let foundExistingTerm: PromptTerm | null = null;
+    let existingTermCategoryId: string | null = null;
+    for (const category of processedPromptCategories) {
+      for (const term of category.terms) {
+        const existingTermEnLower = term.termEn.toLowerCase().trim();
+        const existingTermZhLower = term.termZh.toLowerCase().trim();
+        if ((termEnLower && termEnLower === existingTermEnLower) || (termZhLower && termZhLower === existingTermZhLower)) {
+          foundExistingTerm = term;
+          existingTermCategoryId = category.id;
+          break;
+        }
+      }
+      if (foundExistingTerm) break;
     }
-  }
+    setActivePromptTerms(prevActiveTerms => {
+      const newActiveTermsMap = new Map(prevActiveTerms);
+      if (foundExistingTerm && existingTermCategoryId) {
+        if (!newActiveTermsMap.has(foundExistingTerm.id)) {
+          newActiveTermsMap.set(foundExistingTerm.id, {
+            ...foundExistingTerm,
+            weight: 1.0,
+            locked: false,
+            categoryId: existingTermCategoryId,
+            order: getNextOrderBasedOnMap(newActiveTermsMap)
+          });
+        }
+      } else {
+        const newTermId = `ai_img_term_${Date.now()}_${termEnLower.replace(/[^a-z0-9]/gi, '_').substring(0, 10)}_${Math.random().toString(16).slice(2, 8)}`;
+        const newTermToAdd: PromptTerm = {
+          id: newTermId,
+          termEn: keyword.termEn,
+          termZh: keyword.termZh,
+          categoryId: 'ai_analyzed_image_terms', 
+          isCustom: true,
+        };
+        newActiveTermsMap.set(newTermToAdd.id, {
+          ...newTermToAdd,
+          weight: 1.0,
+          locked: false,
+          categoryId: 'ai_analyzed_image_terms',
+          order: getNextOrderBasedOnMap(newActiveTermsMap)
+        });
+      }
+      return newActiveTermsMap;
+    });
+    setIsPromptEnManual(false); setIsPromptZhManual(false);
+  }, [processedPromptCategories, getNextOrderBasedOnMap]); 
+
+
+  const activeTermsForBuilder: SelectedPromptTermForChip[] = useMemo(() => {
+    return Array.from(activePromptTerms.values())
+      .sort((a, b) => (a.order || 0) - (b.order || 0))
+      .map(term => {
+        const isCategorized = processedPromptCategories.some(category =>
+          category.terms.some(catTerm => catTerm.id === term.id)
+        );
+        return { ...term, isCategorized };
+      });
+  }, [activePromptTerms, processedPromptCategories]);
   
+  const handleSetImageForSubjectContext = useCallback((imageSrc: string | null) => {
+    setAnalyzedImageForSubjectContext(imageSrc);
+  }, []);
+
+  const currentPromptStateForImageGen: PromptStateForHistory = useMemo(() => ({
+    selectedStyleId: selectedStyle?.id || null,
+    selectedRoomTypeId: selectedRoomType?.id || null,
+    activeTerms: Array.from(activePromptTerms.entries()),
+    subjectInputEn,
+    subjectInputZh,
+    manualPromptEn: isPromptEnManual ? manualPromptEn : undefined,
+    manualPromptZh: isPromptZhManual ? manualPromptZh : undefined,
+  }), [selectedStyle, selectedRoomType, activePromptTerms, subjectInputEn, subjectInputZh, isPromptEnManual, manualPromptEn, isPromptZhManual, manualPromptZh]);
+
+
+  const handleGenerateNewStyleSet = useCallback(async () => {
+    if (!ai || !settingsContext) {
+        setAISuggestedStylesError("AI client 或設定組件不可用。");
+        return;
+    }
+    const effectiveAppContextThemeEn = appContextThemeEn || "Interior Design";
+    const effectiveAppContextThemeZh = appContextThemeZh || "室內設計";
+
+    setIsLoadingAISuggestedStyles(true);
+    setAISuggestedStylesError(null);
+    if (aiStyleSetThinkingIntervalRef.current) clearInterval(aiStyleSetThinkingIntervalRef.current);
+
+    const steps = [
+        `分析應用程式主題: ${effectiveAppContextThemeZh}`,
+        "AI 正在構思一個新的設計風格...",
+        "生成風格名稱与基礎提示詞...",
+        "準備新風格資料...",
+        "即將完成！"
+    ];
+    setAIStyleSetThinkingMessages(steps);
+    setCurrentAIStyleSetThinkingIndex(0);
+    aiStyleSetThinkingIntervalRef.current = window.setInterval(() => {
+        setCurrentAIStyleSetThinkingIndex(prev => {
+            if (prev < steps.length - 1) return prev + 1;
+            if (aiStyleSetThinkingIntervalRef.current) clearInterval(aiStyleSetThinkingIntervalRef.current);
+            return prev;
+        });
+    }, 1200);
+
+    const promptTemplate = aiSystemPrompts.aiStyleSetSuggestion.template;
+    const allCategoryIds = Object.keys(customPromptCategorySettings || PROMPT_CATEGORIES);
+    const existingStyleNames = designStyles.map(s => `${s.nameEn} (${s.nameZh})`);
+    
+    const prompt = fillPromptTemplate(promptTemplate, {
+        appContextThemeEn: effectiveAppContextThemeEn,
+        appContextThemeZh: effectiveAppContextThemeZh,
+        existingStyleNamesJSON: JSON.stringify(existingStyleNames),
+        categoryIdsJSON: JSON.stringify(allCategoryIds),
+    });
+
+    try {
+        const response: GeminiGenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-preview-04-17',
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+        });
+        if (aiStyleSetThinkingIntervalRef.current) clearInterval(aiStyleSetThinkingIntervalRef.current);
+
+        const newStyleObject = parseGeminiJsonResponse<DesignStyle>(response.text);
+        if (newStyleObject && newStyleObject.id && newStyleObject.nameEn && newStyleObject.nameZh && newStyleObject.basePromptEn && newStyleObject.basePromptZh) {
+            
+            const validatedNewStyle: DesignStyle = {
+                ...newStyleObject,
+                descriptionEn: newStyleObject.descriptionEn || '',
+                descriptionZh: newStyleObject.descriptionZh || '',
+                dynamicDetails: newStyleObject.dynamicDetails && newStyleObject.dynamicDetails.length === 2 ?
+                    [
+                        { ...newStyleObject.dynamicDetails[0], termsEn: ensureThreeTerms(newStyleObject.dynamicDetails[0]?.termsEn), termsZh: ensureThreeTerms(newStyleObject.dynamicDetails[0]?.termsZh) },
+                        { ...newStyleObject.dynamicDetails[1], termsEn: ensureThreeTerms(newStyleObject.dynamicDetails[1]?.termsEn), termsZh: ensureThreeTerms(newStyleObject.dynamicDetails[1]?.termsZh) }
+                    ]
+                    : [ 
+                        { labelEn: "Details 1", labelZh: "細節 1", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) },
+                        { labelEn: "Details 2", labelZh: "細節 2", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) }
+                    ],
+                relatedCategories: Array.isArray(newStyleObject.relatedCategories) && newStyleObject.relatedCategories.length > 0 
+                                    ? newStyleObject.relatedCategories 
+                                    : allCategoryIds,
+                isCustom: false, // AI is instructed to set this to false for these "core" suggestions
+            };
+            
+            contextAddDesignStyle(validatedNewStyle);
+            setSelectedStyle(validatedNewStyle); 
+            setAISuggestedStylesError(null);
+        } else {
+            console.error("AI Style Suggestion: Invalid data format from AI for single style.", newStyleObject, "Original text:", response.text);
+            setAISuggestedStylesError("AI 返回的風格建議格式不正確或為空。");
+        }
+    } catch (e: any) {
+        if (aiStyleSetThinkingIntervalRef.current) clearInterval(aiStyleSetThinkingIntervalRef.current);
+        console.error("Error generating new style:", e);
+        setAISuggestedStylesError(`新增 AI 風格建議失敗: ${e.message || "未知錯誤"}`);
+    } finally {
+        setIsLoadingAISuggestedStyles(false);
+    }
+  }, [ai, appContextThemeEn, appContextThemeZh, aiSystemPrompts.aiStyleSetSuggestion, customPromptCategorySettings, designStyles, settingsContext, contextAddDesignStyle]);
+
+  const handleGenerateNewRoomTypeSet = useCallback(async () => {
+    if (!ai || !settingsContext) {
+        setAIRoomTypeSetError("AI client 或設定組件不可用。");
+        return;
+    }
+    const effectiveAppContextThemeEn = appContextThemeEn || "Interior Design";
+    const effectiveAppContextThemeZh = appContextThemeZh || "室內設計";
+
+
+    setIsLoadingAIRoomTypeSet(true);
+    setAIRoomTypeSetError(null);
+    if (aiRoomTypeSetThinkingIntervalRef.current) clearInterval(aiRoomTypeSetThinkingIntervalRef.current);
+
+    const steps = [
+        `分析應用程式主題: ${effectiveAppContextThemeZh}`,
+        `AI 正在為「${uiTexts.roomTypeSelectorTitle?.textZh || '空間類型'}」構思一個新的項目...`,
+        "生成空間/區域類型名稱...",
+        "準備新空間/區域類型資料...",
+        "即將完成！"
+    ];
+    setAIRoomTypeSetThinkingMessages(steps);
+    setCurrentAIRoomTypeSetThinkingIndex(0);
+    aiRoomTypeSetThinkingIntervalRef.current = window.setInterval(() => {
+        setCurrentAIRoomTypeSetThinkingIndex(prev => {
+            if (prev < steps.length - 1) return prev + 1;
+            if (aiRoomTypeSetThinkingIntervalRef.current) clearInterval(aiRoomTypeSetThinkingIntervalRef.current);
+            return prev;
+        });
+    }, 1200);
+    
+    const promptTemplate = aiSystemPrompts.aiRoomTypeSetSuggestion.template;
+    const existingRoomTypeNames = roomTypes.map(rt => `${rt.termEn} (${rt.termZh})`);
+    const prompt = fillPromptTemplate(promptTemplate, { 
+        appContextThemeEn: effectiveAppContextThemeEn,
+        appContextThemeZh: effectiveAppContextThemeZh,
+        existingRoomTypeNamesJSON: JSON.stringify(existingRoomTypeNames),
+    });
+
+    try {
+        const response: GeminiGenerateContentResponse = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-preview-04-17',
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+        });
+        if (aiRoomTypeSetThinkingIntervalRef.current) clearInterval(aiRoomTypeSetThinkingIntervalRef.current);
+
+        const newRoomTypeObject = parseGeminiJsonResponse<PromptTerm>(response.text);
+        if (newRoomTypeObject && newRoomTypeObject.id && newRoomTypeObject.termEn && newRoomTypeObject.termZh) {
+            
+            const validatedNewRoomType: PromptTerm = {
+                ...newRoomTypeObject,
+                isCustom: false, // AI instructed to set this
+            };
+            
+            contextAddRoomType(validatedNewRoomType);
+            setSelectedRoomType(validatedNewRoomType);
+            setAIRoomTypeSetError(null);
+        } else {
+            console.error("AI Room Type Suggestion: Invalid data format from AI for single room type.", newRoomTypeObject, "Original text:", response.text);
+            setAIRoomTypeSetError("AI 返回的空間/區域類型建議格式不正確或為空。");
+        }
+    } catch (e: any) {
+        if (aiRoomTypeSetThinkingIntervalRef.current) clearInterval(aiRoomTypeSetThinkingIntervalRef.current);
+        console.error("Error generating new room type:", e);
+        setAIRoomTypeSetError(`新增 AI 空間/區域類型建議失敗: ${e.message || "未知錯誤"}`);
+    } finally {
+        setIsLoadingAIRoomTypeSet(false);
+    }
+  }, [ai, appContextThemeEn, appContextThemeZh, aiSystemPrompts.aiRoomTypeSetSuggestion, roomTypes, settingsContext, uiTexts.roomTypeSelectorTitle, contextAddRoomType]);
+
+  const handleDeleteTermFromCategoryAndActive = useCallback((termId: string, categoryId: string) => {
+    if (!settingsContext) return;
+    const termToDelete = processedPromptCategories.flatMap(cat => cat.terms).find(t => t.id === termId);
+    const categoryOfTerm = processedPromptCategories.find(cat => cat.id === categoryId);
+
+    let confirmMessage = `您確定要從分類「${categoryOfTerm?.nameZh || categoryId}」中刪除詞語「${termToDelete?.termZh || termId}」嗎？`;
+    confirmMessage += `\n此操作會將其從目前設定中移除。若要復原，需重設此分類或整體應用程式設定至預設值。`;
+
+    if (window.confirm(confirmMessage)) {
+        contextDeleteTermFromCategory(termId, categoryId);
+        setActivePromptTerms(prevTerms => {
+            const newTerms = new Map(prevTerms);
+            if (newTerms.has(termId)) {
+                newTerms.delete(termId);
+            }
+            return newTerms;
+        });
+    }
+  }, [settingsContext, contextDeleteTermFromCategory, processedPromptCategories]);
+
+  const handleDeleteTermFromStyleDetailContext = useCallback((styleId: string, detailSetIndex: 0 | 1, termIndex: number) => {
+    if(!settingsContext || !selectedStyle) return;
+    const styleName = selectedStyle.nameZh;
+    const detailSet = selectedStyle.dynamicDetails[detailSetIndex];
+    const labelName = detailSet.labelZh;
+    const termEn = detailSet.termsEn[termIndex];
+    const termZh = detailSet.termsZh[termIndex];
+
+    const confirmMessage = `您確定要從風格「${styleName}」的「${labelName}」中刪除詞語「${termEn} / ${termZh}」嗎？\n此操作會將其從目前設定中移除（若要復原，需透過 AI 重新生成此風格的詳細資料或重設整體應用程式設定至預設值）。`;
+    if (window.confirm(confirmMessage)) {
+        contextDeleteTermFromStyleDetail(styleId, detailSetIndex, termIndex);
+    }
+  }, [settingsContext, selectedStyle, contextDeleteTermFromStyleDetail]);
+
+  const handleDeleteRoomTypeAndUpdateSelection = useCallback((roomTypeId: string) => {
+    if (!settingsContext) return;
+    const roomTypeToDelete = roomTypes.find(rt => rt.id === roomTypeId);
+    if (!roomTypeToDelete) return;
+    
+    const confirmMessage = `您確定要刪除空間類型「${roomTypeToDelete.termZh} (${roomTypeToDelete.termEn})」嗎？\n此操作會將其從目前設定中移除。若要復原，需重設空間類型或整體應用程式設定至預設值。`;
+    if (window.confirm(confirmMessage)) {
+        contextDeleteRoomType(roomTypeId);
+        if (selectedRoomType?.id === roomTypeId) {
+            setSelectedRoomType(null); 
+        }
+    }
+  }, [settingsContext, roomTypes, selectedRoomType, contextDeleteRoomType]);
+
+  const handleDeleteDesignStyleAndUpdateSelection = useCallback((styleId: string) => {
+    if (!settingsContext) return;
+    const styleToDelete = designStyles.find(s => s.id === styleId);
+    if (!styleToDelete) return;
+
+    const confirmMessage = `您確定要刪除設計風格「${styleToDelete.nameZh} (${styleToDelete.nameEn})」嗎？\n此操作會將其從目前設定中移除，且可能無法輕易復原。\n若要取回預設風格，需重設核心內容或整體應用程式設定。`;
+    if (window.confirm(confirmMessage)) {
+        contextDeleteDesignStyle(styleId);
+        if (selectedStyle?.id === styleId) {
+            const remainingStyles = designStyles.filter(s => s.id !== styleId);
+            setSelectedStyle(remainingStyles.length > 0 ? remainingStyles[0] : null);
+        }
+    }
+  }, [settingsContext, designStyles, selectedStyle, contextDeleteDesignStyle]);
+
+  const handleAddNewCategory = useCallback((data: { id: string; nameEn: string; nameZh: string; isOpenDefault: boolean }) => {
+    if (!settingsContext) return false;
+    const success = contextAddPromptCategory({
+      id: data.id, 
+      nameEn: data.nameEn,
+      nameZh: data.nameZh,
+      isOpenDefault: data.isOpenDefault,
+    });
+    if (success) {
+        setShowAddCategoryModal(false); 
+    }
+    return success; 
+  }, [settingsContext, contextAddPromptCategory]);
+
+  const handleDeletePromptCategoryAndUpdateActive = useCallback((categoryId: string) => {
+    if (!settingsContext) return;
+    const categoryToDelete = processedPromptCategories.find(cat => cat.id === categoryId);
+    if (!categoryToDelete) return;
+    
+    const confirmMessage = `您確定要刪除分類「${categoryToDelete.nameZh}」及其包含的所有詞語嗎？此操作無法復原。`;
+    if (window.confirm(confirmMessage)) {
+        contextDeletePromptCategory(categoryId);
+        setActivePromptTerms(prevTerms => {
+            const newTerms = new Map(prevTerms);
+            prevTerms.forEach((term, termId) => {
+                if (term.categoryId === categoryId) {
+                    newTerms.delete(termId);
+                }
+            });
+            return newTerms;
+        });
+    }
+  }, [settingsContext, contextDeletePromptCategory, processedPromptCategories]);
+
+
+  if (currentView === 'favorites') {
+    return (
+      <FavoritesPage
+        images={favoritedImages}
+        onBack={() => setCurrentView('main')}
+        onToggleFavorite={handleToggleFavoriteImage}
+        onViewImageDetail={(image) => handleOpenImageDetail(image, favoritedImages)}
+        onRestoreState={handleRestorePromptState}
+        onOpenMultimodalEditModal={handleOpenMultimodalEditModal}
+        onOpenImageFusionStudio={handleOpenImageFusionStudio} 
+        uiTexts={{
+          backButtonLabel: uiTexts.backToMainAppButtonLabel.textZh,
+          pageTitle: uiTexts.favoritesPageTitle.textZh,
+          favoriteImageButtonTooltip: uiTexts.favoriteImageButtonTooltip.textZh,
+          unfavoriteImageButtonTooltip: uiTexts.unfavoriteImageButtonTooltip.textZh,
+          // imageFusionStudioOpenButtonTooltip is now sourced from context inside FavoritesPage
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-white flex flex-col">
-      <Header onToggleSettings={toggleSettingsModal} />
+      <Header
+        onToggleSettings={toggleSettingsModal}
+        onViewFavorites={() => setCurrentView('favorites')}
+        currentView={currentView}
+      />
       <main className="flex-grow container mx-auto p-4 md:p-6 lg:p-8 space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-1 space-y-6 p-4 bg-white rounded-xl shadow-lg apple-scroll overflow-y-auto max-h-[calc(100vh-120px)]">
-            <StyleSelector styles={userDesignStyles} selectedStyle={selectedStyle} onSelect={handleStyleSelect} onShowAddStyleModal={toggleAddStyleModal} />
+        <div className="grid grid-cols-1 lg:grid-cols-4 2xl:grid-cols-8 gap-6">
+          
+          {/* Left Column: Selectors */}
+          <div className="lg:col-span-1 2xl:col-span-2 space-y-6 p-4 bg-white rounded-xl shadow-lg border border-gray-200 apple-scroll overflow-y-auto max-h-[calc(100vh-120px)]">
+            <StyleSelector
+                styles={designStyles}
+                selectedStyle={selectedStyle}
+                onSelect={handleStyleSelect}
+                onShowAddStyleModal={toggleAddStyleModal}
+                title={uiTexts.styleSelectorTitle?.textZh || DEFAULT_UI_TEXTS.styleSelectorTitle.textZh}
+                onGenerateNewStyleSet={handleGenerateNewStyleSet}
+                isLoadingAISuggestedStyles={isLoadingAISuggestedStyles}
+                aiSuggestedStylesError={aiSuggestedStylesError}
+                geminiApiKeySet={!!geminiApiKey}
+                thinkingMessages={aiStyleSetThinkingMessages}
+                currentThinkingIndex={currentAIStyleSetThinkingIndex}
+                onDeleteTermFromDetail={handleDeleteTermFromStyleDetailContext}
+                onDeleteStyle={handleDeleteDesignStyleAndUpdateSelection} 
+            />
             {selectedStyle && (
-              <div className="mt-4 p-3 bg-gray-50 rounded-lg">
-                <button onClick={() => setShowStyleDetails(!showStyleDetails)} className="w-full flex justify-between items-center text-left text-sm font-semibold text-gray-700 hover:text-gray-900" aria-expanded={showStyleDetails} aria-controls="style-details-content">
+              <div className="mt-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <button onClick={() => setShowStyleDetails(!showStyleDetails)} className="w-full flex justify-between items-center text-left text-sm font-semibold text-gray-900/90 hover:text-gray-900 active:scale-95 transform transition-transform duration-100" aria-expanded={showStyleDetails} aria-controls="style-details-content">
                   <span>{selectedStyle.nameEn} / {selectedStyle.nameZh} 詳細資訊</span>
                   {showStyleDetails ? <ChevronUpIcon className="w-4 h-4" /> : <ChevronDownIcon className="w-4 h-4" />}
                 </button>
                 {showStyleDetails && (
                   <div id="style-details-content" className="mt-2 space-y-3 text-xs text-gray-600">
-                    <GenerateStyleDetailsButton onClick={handleGenerateStyleDetailsWithAI} isLoading={isLoadingStyleDetailsAI} error={styleDetailsAIError} geminiApiKeySet={!!geminiApiKey} disabled={!selectedStyle}/>
-                    <p><strong className="font-medium">描述 (En):</strong> {selectedStyle.descriptionEn || '尚無描述。'}</p>
-                    <p><strong className="font-medium">描述 (繁中):</strong> {selectedStyle.descriptionZh || '尚無描述。'}</p>
-                    <div><strong className="font-medium block mb-1">主要家具/品牌:</strong>
-                        {(selectedStyle.furnitureBrandsEn && selectedStyle.furnitureBrandsEn.length > 0) ? (
-                            <div className="flex flex-wrap gap-1.5"> {selectedStyle.furnitureBrandsEn.map((brandEn, index) => (
-                                <button key={`brand-${index}-${selectedStyle.id}`} onClick={() => handleAddKeywordFromDetails(brandEn, selectedStyle.furnitureBrandsZh?.[index] || brandEn)} className="px-1.5 py-0.5 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded text-[10px] flex items-center space-x-1 transition-colors" title={`新增 ${brandEn} / ${selectedStyle.furnitureBrandsZh?.[index] || brandEn}`}>
-                                    <PlusIcon className="w-2.5 h-2.5" /><span>{brandEn} / {selectedStyle.furnitureBrandsZh?.[index] || brandEn}</span></button> ))} </div>
-                        ) : <p className="text-[11px] text-gray-500">尚無家具/品牌資訊。</p>}
-                    </div>
-                     <div><strong className="font-medium block mb-1 mt-2">佈置技巧:</strong>
-                        {(selectedStyle.decorTipsEn && selectedStyle.decorTipsEn.length > 0) ? (
-                            <div className="flex flex-wrap gap-1.5"> {selectedStyle.decorTipsEn.map((tipEn, index) => (
-                                <button key={`tip-${index}-${selectedStyle.id}`} onClick={() => handleAddKeywordFromDetails(tipEn, selectedStyle.decorTipsZh?.[index] || tipEn)} className="px-1.5 py-0.5 bg-gray-200 text-gray-700 hover:bg-gray-300 rounded text-[10px] flex items-center space-x-1 transition-colors" title={`新增 ${tipEn} / ${selectedStyle.decorTipsZh?.[index] || tipEn}`}>
-                                    <PlusIcon className="w-2.5 h-2.5" /><span>{tipEn} / {selectedStyle.decorTipsZh?.[index] || tipEn}</span></button>))} </div>
-                        ) : <p className="text-[11px] text-gray-500">尚無佈置技巧資訊。</p>}
-                    </div>
+                    <GenerateStyleDetailsButton 
+                        onClick={handleGenerateStyleDetailsWithAI}
+                        isLoading={isLoadingStyleDetailsAI}
+                        error={styleDetailsAIError}
+                        geminiApiKeySet={!!geminiApiKey}
+                    />
+                    {isLoadingStyleDetailsAI && styleDetailsThinkingMessages.length > 0 && (
+                      <div className="my-1 p-1.5 border border-gray-100 rounded-md bg-white text-[11px]">
+                          {styleDetailsThinkingMessages.map((message, index) => (
+                            <div key={index} className={`flex items-center transition-opacity duration-300 ${index <= currentStyleDetailsThinkingIndex ? 'opacity-100' : 'opacity-40'}`}>
+                              {index < currentStyleDetailsThinkingIndex ? <CheckCircleIcon className="w-3 h-3 mr-1 text-green-500 shrink-0" />
+                              : index === currentStyleDetailsThinkingIndex ? <LoadingSpinner className="w-2.5 h-2.5 mr-1 text-blue-500 shrink-0" />
+                              : <div className="w-3 h-3 mr-1 shrink-0 border border-gray-300 rounded-full" />}
+                              <span className={`${index === currentStyleDetailsThinkingIndex ? 'font-medium text-blue-600' : 'text-gray-500'}`}>{message}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                    <p><strong>英文描述:</strong> {selectedStyle.descriptionEn || '尚無描述。'}</p>
+                    <p><strong>中文描述:</strong> {selectedStyle.descriptionZh || '尚無描述。'}</p>
+                    {selectedStyle.dynamicDetails?.map((detailSet, setIndex) => (
+                      <div key={setIndex} className="mt-2 pt-2 border-t border-gray-100">
+                        <p className="font-medium text-gray-700">{detailSet.labelEn} / {detailSet.labelZh}:</p>
+                        <ul className="list-disc list-inside pl-2 text-[11px] space-y-0.5">
+                          {detailSet.termsEn.map((termEn, termIndex) => {
+                            const termZh = detailSet.termsZh[termIndex];
+                            if (termEn || termZh) { 
+                                return (
+                                    <li key={termIndex} className="group flex justify-between items-center">
+                                    <button 
+                                        onClick={() => handleAddKeywordFromDetails(selectedStyle.id, setIndex as 0 | 1, termEn, termZh)}
+                                        className="text-left hover:text-blue-600 transition-colors active:scale-95 transform duration-100"
+                                        title={`點擊以新增 "${termEn} / ${termZh}" 到主要提示詞`}
+                                    >
+                                        {termEn} / {termZh}
+                                    </button>
+                                    <IconButton
+                                        onClick={() => contextDeleteTermFromStyleDetail(selectedStyle.id, setIndex as 0 | 1, termIndex)}
+                                        aria-label={`從「${detailSet.labelZh}」刪除詞語「${termEn} / ${termZh}」`}
+                                        title={`刪除此建議詞語`}
+                                        className="ml-1 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 active:scale-95 transform transition-transform duration-100"
+                                    >
+                                        <TrashIcon className="w-3 h-3" />
+                                    </IconButton>
+                                    </li>
+                                );
+                            }
+                            return null;
+                          })}
+                        </ul>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
             )}
-            <RoomTypeSelector roomTypes={ROOM_TYPES} selectedRoomType={selectedRoomType} onSelect={handleRoomTypeSelect} />
-            <div className="my-4">
-              <button onClick={handleGetAISuggestions} disabled={isLoadingAiSuggestions || !selectedStyle || !selectedRoomType || !geminiApiKey} className="w-full flex items-center justify-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-black hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:bg-gray-300 disabled:cursor-not-allowed" title={!geminiApiKey ? "Gemini API 金鑰未設定" : (!selectedStyle || !selectedRoomType ? "請先選擇風格和空間類型" : "獲取 AI 建議")}>
-                {isLoadingAiSuggestions && !showAiSuggestionsModal ? (<><LoadingSpinner className="w-5 h-5 mr-2" /> 正在獲取建議...</>) : (<><SparklesIcon className="w-5 h-5 mr-2" /> 獲取 AI 建議</>)}
-              </button>
-              {aiSuggestionError && (<div className="mt-2 p-2 bg-gray-100 border border-gray-300 rounded-md text-xs text-gray-700 flex items-start"><ExclamationTriangleIcon className="w-4 h-4 mr-1.5 flex-shrink-0 mt-0.5"/><span>{aiSuggestionError}</span></div>)}
-            </div>
-            <div className="pt-4 border-t border-gray-200">
-                <div className="flex justify-between items-center mb-2">
-                    <h2 className="text-lg font-semibold text-gray-800">提示詞分類</h2>
-                    <div className="space-x-1 sm:space-x-2">
-                        <button onClick={handleRandomizeAllPrompts} disabled={isLoadingRandomPrompts || !selectedStyle || !selectedRoomType || !geminiApiKey} className="text-xs text-gray-600 hover:text-black font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center" title={!geminiApiKey ? "Gemini API 金鑰未設定" : (!selectedStyle || !selectedRoomType ? "請先選擇風格和空間" : "一鍵隨機選詞")}>
-                            {isLoadingRandomPrompts ? <LoadingSpinner className="w-3 h-3 sm:w-4 sm:h-4 mr-1"/> : <CubeTransparentIcon className="w-3 h-3 sm:w-4 sm:h-4 mr-1" />}
-                            <span className="hidden sm:inline">一鍵</span>隨機
-                        </button>
-                        <button onClick={handleExpandAllAccordions} className="text-xs text-gray-600 hover:text-black font-medium">全部展開</button>
-                        <button onClick={handleCollapseAllAccordions} className="text-xs text-gray-600 hover:text-black font-medium">全部收合</button>
-                    </div>
-                </div>
-                 {randomPromptsError && (<div className="my-2 p-2 bg-gray-100 border border-gray-300 rounded-md text-xs text-gray-700 flex items-start"><ExclamationTriangleIcon className="w-4 h-4 mr-1.5 flex-shrink-0 mt-0.5"/><span>{randomPromptsError}</span></div>)}
-                <div className="space-y-2"> 
-                  {relevantCategories.map((category, index) => (
-                    <PromptCategoryAccordion
-                      key={category.id}
-                      category={category}
-                      selectedTerms={activePromptTerms}
-                      onToggleTerm={(term) => toggleTerm(term, category.id, index * 1000 + (category.terms.findIndex(t=>t.id === term.id)) )}
-                      isOpen={accordionStates[category.id] === undefined ? (category.isOpen || false) : accordionStates[category.id]}
-                      onToggle={() => handleToggleAccordion(category.id)}
-                      onShowAddCustomTermModal={toggleAddCustomTermModal} // New prop
-                    />
-                  ))}
-                </div>
-            </div>
+
+            <RoomTypeSelector
+              roomTypes={roomTypes}
+              selectedRoomType={selectedRoomType}
+              onSelect={handleRoomTypeSelect}
+              title={uiTexts.roomTypeSelectorTitle?.textZh || DEFAULT_UI_TEXTS.roomTypeSelectorTitle.textZh}
+              isEnabled={isRoomTypeSelectorEnabled}
+              onToggleEnable={setIsRoomTypeSelectorEnabled}
+              onShowAddRoomTypeModal={toggleAddRoomTypeModal}
+              onGenerateNewRoomTypeSet={handleGenerateNewRoomTypeSet}
+              isLoadingAIRoomTypeSet={isLoadingAIRoomTypeSet}
+              aiRoomTypeSetError={aiRoomTypeSetError}
+              geminiApiKeySet={!!geminiApiKey}
+              thinkingMessages={aiRoomTypeSetThinkingMessages}
+              currentThinkingIndex={currentAIRoomTypeSetThinkingIndex}
+              buttonLabelFromAI={uiTexts.roomTypeSetAISuggestionButtonLabel?.textZh || DEFAULT_UI_TEXTS.roomTypeSetAISuggestionButtonLabel.textZh}
+              onDeleteRoomType={handleDeleteRoomTypeAndUpdateSelection}
+            />
+            
+            <SubjectInput 
+                subjectEn={subjectInputEn}
+                subjectZh={subjectInputZh}
+                onSubjectEnChange={setSubjectInputEn}
+                onSubjectZhChange={setSubjectInputZh}
+                aiSuggestionSeedText={aiSuggestionSeedText} 
+                onAiSuggestionSeedTextChange={setAiSuggestionSeedText}
+                isEnabled={isSubjectInputEnabled}
+                onToggleEnable={setIsSubjectInputEnabled}
+                ai={ai}
+                geminiApiKeySet={!!geminiApiKey}
+                uiTexts={{
+                    title: uiTexts.subjectInputTitle.textZh,
+                    aiSuggestionButtonLabel: uiTexts.subjectInputAISuggestionButtonLabel.textZh,
+                    translateToEnglishButton: "譯為英文",
+                    translateToChineseButton: "譯為中文",
+                    enPlaceholder: "例如：A woman standing on a city street at night",
+                    zhPlaceholder: "例如：一個女人站在夜晚的城市街道上",
+                }}
+                fillPromptTemplate={fillPromptTemplate}
+                aiSystemPrompts={aiSystemPrompts}
+                appContextThemeEn={appContextThemeEn}
+                appContextThemeZh={appContextThemeZh}
+                analyzedImageKeywords={lastAnalyzedKeywords}
+                selectedStyle={selectedStyle}
+                selectedRoomType={selectedRoomType}
+                isRoomTypeSelectorEnabled={isRoomTypeSelectorEnabled}
+                analyzedImageSrc={analyzedImageForSubjectContext} 
+                onFetchSubjectPhraseSuggestions={handleFetchSubjectPhraseSuggestions}
+            />
+            
+            <ImageAnalyzer 
+                isEnabled={isImageAnalyzerEnabled}
+                onToggleEnable={setIsImageAnalyzerEnabled}
+                uiTexts={{
+                    imageAnalyzerTitle: uiTexts.imageAnalyzerTitle,
+                    analyzeImageButton: uiTexts.analyzeImageButton,
+                    uploadImageLabel: uiTexts.uploadImageLabel,
+                    imageAnalyzerAdvancedEditButtonLabel: uiTexts.imageAnalyzerAdvancedEditButtonLabel,
+                    imageAnalyzerOpenFusionStudioButtonLabel: uiTexts.imageAnalyzerOpenFusionStudioButtonLabel,
+                    imageFusionStudioImportFromGalleryButtonLabel: uiTexts.imageFusionStudioImportFromGalleryButtonLabel,
+                    imageSelectorModalTitle: uiTexts.imageSelectorModalTitle,
+                    imageSelectorModalAllTab: uiTexts.imageSelectorModalAllTab,
+                    imageSelectorModalFavoritesTab: uiTexts.imageSelectorModalFavoritesTab,
+                    imageSelectorModalNoImages: uiTexts.imageSelectorModalNoImages,
+                    imageSelectorModalNoFavorites: uiTexts.imageSelectorModalNoFavorites,
+                    favoriteImageButtonTooltip: uiTexts.favoriteImageButtonTooltip,
+                    unfavoriteImageButtonTooltip: uiTexts.unfavoriteImageButtonTooltip,
+                }}
+                geminiApiKeySet={!!geminiApiKey}
+                onOpenMultimodalEditFromAnalyzer={handleOpenMultimodalEditFromAnalyzer}
+                onOpenImageFusionStudioFromAnalyzer={handleOpenImageFusionStudioFromAnalyzer}
+                ai={ai}
+                aiSystemPrompts={{
+                    imageAnalysisForPrompts: aiSystemPrompts.imageAnalysisForPrompts,
+                    ocrImage: aiSystemPrompts.ocrImage,
+                }}
+                fillPromptTemplate={fillPromptTemplate}
+                appContextThemeEn={appContextThemeEn}
+                appContextThemeZh={appContextThemeZh}
+                onKeywordsExtracted={handleKeywordsExtractedFromAnalyzer}
+                onAddAnalyzedKeywordToPrompt={handleAddAnalyzedKeywordToActivePrompt}
+                imageHistory={imageHistory}
+                onImageReadyForContext={handleSetImageForSubjectContext} 
+            />
           </div>
 
-          <div ref={rightColumnRef} className="lg:col-span-2 space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <PromptBuilder activeTerms={Array.from(activePromptTerms.values()).sort((a,b) => (a.order || 0) - (b.order || 0) )} onUpdateWeight={updateTermWeight} onToggleLock={toggleTermLock} onRemoveTerm={(termId) => setActivePromptTerms(prev => { const m = new Map(prev); m.delete(termId); return m; })} onClearAllTerms={handleClearAllTerms} generatedPromptEn={generatedPromptEn} generatedPromptZh={generatedPromptZh} onPolishPrompt={handlePolishPrompt} isPolishingEn={isPolishingEn} isPolishingZh={isPolishingZh} polishError={polishError} clearPolishError={() => setPolishError(null)} geminiApiKeySet={!!geminiApiKey} />
-              <ImageGenerator promptEn={generatedPromptEn} geminiApiKey={geminiApiKey} onImageGenerated={handleImageGenerated} onViewImage={handleViewImageFromGenerator} currentPromptState={{ selectedStyleId: selectedStyle?.id || null, selectedRoomTypeId: selectedRoomType?.id || null, activeTerms: Array.from(activePromptTerms.entries()) }} />
-            </div>
-            <ImageHistoryDisplay history={imageHistory} onViewImage={handleOpenImageDetail} onRestoreState={handleRestorePromptState} />
+          {/* Middle Column: Image Generator and History */}
+          <div ref={imageGeneratorColumnRef} className="lg:col-span-2 2xl:col-span-4 space-y-6">
+            <ImageGenerator
+              promptEn={effectivePromptEn}
+              geminiApiKey={geminiApiKey}
+              onImageGenerated={handleImageGenerated}
+              onViewImage={handleViewImageFromGenerator}
+              currentPromptState={currentPromptStateForImageGen}
+              title={uiTexts.imageGeneratorTitle?.textZh || DEFAULT_UI_TEXTS.imageGeneratorTitle.textZh}
+            />
+            <ImageHistoryDisplay
+              history={imageHistory}
+              onViewImage={(image) => handleOpenImageDetail(image, imageHistory)}
+              onRestoreState={handleRestorePromptState}
+              onClearAllHistory={handleClearHistory}
+              onToggleFavorite={handleToggleFavoriteImage}
+              onOpenMultimodalEditModal={handleOpenMultimodalEditModal}
+              onOpenImageFusionStudio={handleOpenImageFusionStudio}
+              title={uiTexts.imageHistoryDisplayTitle?.textZh || DEFAULT_UI_TEXTS.imageHistoryDisplayTitle.textZh}
+            />
+          </div>
+          
+          {/* Right Column: Prompt Builder */}
+          <div className="lg:col-span-1 2xl:col-span-2 space-y-6">
+            <PromptBuilder
+                activeTerms={activeTermsForBuilder}
+                onUpdateWeight={updateTermWeight}
+                onToggleLock={toggleTermLock}
+                onRemoveTerm={handleRemoveTermFromBuilder}
+                onClearAllTerms={handleClearAllTerms}
+                autoGeneratedPromptEn={autoGeneratedPromptEn}
+                autoGeneratedPromptZh={autoGeneratedPromptZh}
+                manualPromptEn={manualPromptEn}
+                onManualPromptEnChange={setManualPromptEn}
+                isPromptEnManual={isPromptEnManual}
+                onIsPromptEnManualChange={setIsPromptEnManual}
+                manualPromptZh={manualPromptZh}
+                onManualPromptZhChange={setManualPromptZh}
+                isPromptZhManual={isPromptZhManual}
+                onIsPromptZhManualChange={setIsPromptZhManual}
+                onPolishPrompt={handlePolishPrompt}
+                isPolishingEn={isPolishingEn}
+                isPolishingZh={isPolishingZh}
+                polishError={polishError}
+                clearPolishError={() => setPolishError(null)}
+                isGeminiKeyAvailable={!!geminiApiKey}
+                title={uiTexts.promptBuilderTitle?.textZh || DEFAULT_UI_TEXTS.promptBuilderTitle.textZh}
+                isVisible={isPromptBuilderVisible}
+                onToggleVisibility={setIsPromptBuilderVisible}
+                onSaveTermFromChip={handleOpenSaveTermModal}
+                onOpenQuickAddTermModal={handleOpenQuickAddTermModal}
+            />
           </div>
         </div>
+        
+        {/* Floating Action Buttons */}
+        <FloatingScrollToGeneratorButton
+            onClick={scrollToImageGenerator}
+            title="前往圖像生成區"
+        />
+        <FloatingAISuggestionsButton
+            onClick={handleGetAISuggestions}
+            isLoading={isLoadingAiSuggestions}
+            disabled={!selectedStyle || !geminiApiKey}
+            title={!geminiApiKey ? "Gemini API 金鑰未設定" : (!selectedStyle ? "請先選擇風格" : "獲取 AI 關鍵詞建議")}
+        />
+        <FloatingCategoriesButton 
+            onClick={togglePromptCategoriesModal}
+            title="開啟提示詞分類選擇器"
+        />
+
+        {/* Modals */}
+        {showPromptCategoriesModal && (
+            <PromptCategoriesModal
+                isOpen={showPromptCategoriesModal}
+                onClose={togglePromptCategoriesModal}
+                uiTexts={uiTexts}
+                relevantCategories={relevantCategories}
+                activePromptTerms={activePromptTerms}
+                toggleTerm={toggleTerm}
+                getAccordionOpenState={getAccordionOpenState}
+                handleToggleAccordion={handleToggleAccordion}
+                handleExpandAllAccordions={handleExpandAllAccordions}
+                handleCollapseAllAccordions={handleCollapseAllAccordions}
+                toggleAddCategoryModal={toggleAddCategoryModal}
+                handleRandomizeAllPrompts={handleRandomizeAllPrompts}
+                isLoadingRandomPrompts={isLoadingRandomPrompts}
+                randomPromptsError={randomPromptsError}
+                isPromptCategoriesEnabled={isPromptCategoriesEnabled}
+                setIsPromptCategoriesEnabled={setIsPromptCategoriesEnabled}
+                geminiApiKeySet={!!geminiApiKey}
+                selectedStyle={selectedStyle}
+                isRoomTypeSelectorEnabled={isRoomTypeSelectorEnabled}
+                selectedRoomType={selectedRoomType}
+                handleOpenAddCustomTermFromCategoryModal={handleOpenAddCustomTermFromCategoryModal}
+                handleDeleteTermFromCategoryAndActive={handleDeleteTermFromCategoryAndActive}
+                handleDeletePromptCategoryAndUpdateActive={handleDeletePromptCategoryAndUpdateActive}
+            />
+        )}
+        <AISuggestionsModal
+            isOpen={showAiSuggestionsModal}
+            onClose={() => setShowAiSuggestionsModal(false)}
+            suggestions={aiSuggestedTerms}
+            onAddTerm={addAISuggestedTerm}
+            activeTerms={activePromptTerms}
+            onRegenerate={handleGetAISuggestions}
+            isLoadingSuggestions={isLoadingAiSuggestions}
+            title={uiTexts.aiSuggestionsModalTitle?.textZh || DEFAULT_UI_TEXTS.aiSuggestionsModalTitle.textZh}
+            thinkingProcessMessages={thinkingProcessMessages}
+            currentThinkingMessageIndex={currentThinkingMessageIndex}
+            error={aiSuggestionError}
+        />
+        {selectedImageForModal && (
+            <ImageDetailModal
+            isOpen={!!selectedImageForModal}
+            onClose={() => setSelectedImageForModal(null)}
+            image={selectedImageForModal}
+            currentIndex={selectedImageIndexInSource}
+            totalImages={modalImageSourceList.length}
+            onNavigate={handleNavigateImageDetail}
+            title={uiTexts.imageDetailModalTitle?.textZh || DEFAULT_UI_TEXTS.imageDetailModalTitle.textZh}
+            />
+        )}
+        {showSettingsModal && (
+            <SettingsModal
+                isOpen={showSettingsModal}
+                onClose={toggleSettingsModal}
+                ai={ai}
+                fillPromptTemplate={fillPromptTemplate}
+                imageHistory={imageHistory} 
+            />
+        )}
+        {showAddStyleModal && (
+             <AddStyleModal
+                isOpen={showAddStyleModal}
+                onClose={toggleAddStyleModal}
+                onAddStyle={handleAddCustomStyle}
+                onTranslateName={handleTranslateNameToEnglish}
+                geminiApiKeySet={!!geminiApiKey}
+                title={uiTexts.addStyleModalTitle?.textZh || DEFAULT_UI_TEXTS.addStyleModalTitle.textZh}
+             />
+        )}
+        {showAddRoomTypeModal && (
+             <AddRoomTypeModal
+                isOpen={showAddRoomTypeModal}
+                onClose={toggleAddRoomTypeModal}
+                onAddRoomType={handleAddCustomRoomType}
+                onTranslateTerm={handleTranslateInputForModal} 
+                geminiApiKeySet={!!geminiApiKey}
+                title={uiTexts.addRoomTypeModalTitle?.textZh || DEFAULT_UI_TEXTS.addRoomTypeModalTitle.textZh}
+             />
+        )}
+        {addCustomTermModalConfig.isOpen && (
+            <AddCustomTermModal
+                isOpen={addCustomTermModalConfig.isOpen}
+                onClose={() => setAddCustomTermModalConfig(prev => ({ ...prev, isOpen: false }))}
+                onSave={handleSaveModalData}
+                onTranslate={handleTranslateInputForModal}
+                initialData={addCustomTermModalConfig.initialData}
+                showCategorySelector={addCustomTermModalConfig.showCategorySelector}
+                allCategories={processedPromptCategories}
+                geminiApiKeySet={!!geminiApiKey}
+                modalTitleKey={addCustomTermModalConfig.modalTitleKey}
+                onShowAISuggestions={handleFetchAISuggestedCategoryTerms}
+            />
+        )}
+        {showMultimodalEditModal && multimodalEditBaseImage && ai && (
+            <MultimodalEditModal
+                isOpen={showMultimodalEditModal}
+                onClose={() => setShowMultimodalEditModal(false)}
+                baseImage={multimodalEditBaseImage}
+                ai={ai}
+                onImageGenerated={handleImageGenerated}
+                uiTexts={{
+                    modalTitle: uiTexts.multimodalEditModalTitle.textZh,
+                    aiSuggestionButtonLabel: uiTexts.multimodalEditAISuggestionButtonLabel.textZh,
+                    multimodalEditUseResultButtonLabel: uiTexts.multimodalEditUseResultButtonLabel.textZh,
+                    multimodalEditChineseInstructionLabel: uiTexts.multimodalEditChineseInstructionLabel.textZh,
+                    multimodalEditEnglishInstructionLabel: uiTexts.multimodalEditEnglishInstructionLabel.textZh,
+                    multimodalEditTranslateToEnButtonLabel: uiTexts.multimodalEditTranslateToEnButtonLabel.textZh,
+                    multimodalEditTranslateToZhButtonLabel: uiTexts.multimodalEditTranslateToZhButtonLabel.textZh,
+                }}
+                systemPromptTemplate={aiSystemPrompts.describeEditedImageForImagen.template}
+                fillPromptTemplate={fillPromptTemplate}
+                imageGenerationSettings={settings.imageGeneration}
+                appContextThemeEn={settings.appContextThemeEn}
+                appContextThemeZh={settings.appContextThemeZh}
+                aiSystemPrompts={{
+                    editInstructionSuggestion: aiSystemPrompts.editInstructionSuggestion,
+                    translateToEnglish: aiSystemPrompts.translateToEnglish,
+                    translateToChinese: aiSystemPrompts.translateToChinese, 
+                }}
+                initialAnalyzedKeywords={multimodalEditInitialKeywords}
+            />
+        )}
+        {showImageFusionStudioModal && imageFusionStudioBaseImage && ai && (
+          <ImageFusionStudioModal
+            isOpen={showImageFusionStudioModal}
+            onClose={() => setShowImageFusionStudioModal(false)}
+            initialBaseImage={imageFusionStudioBaseImage}
+            ai={ai}
+            onImageGenerated={handleImageGenerated}
+            uiTexts={{
+              imageFusionStudioModalTitle: uiTexts.imageFusionStudioModalTitle,
+              imageFusionStudioUploadSecondaryButtonLabel: uiTexts.imageFusionStudioUploadSecondaryButtonLabel,
+              imageFusionStudioUsageIntentLabel: uiTexts.imageFusionStudioUsageIntentLabel,
+              imageFusionStudioGenerateButtonLabel: uiTexts.imageFusionStudioGenerateButtonLabel,
+              imageFusionStudioUseResultButtonLabel: uiTexts.imageFusionStudioUseResultButtonLabel,
+              imageFusionStudioAISuggestionButtonLabel: uiTexts.imageFusionStudioAISuggestionButtonLabel,
+              imageFusionStudioSwapInstructionsButtonTooltip: uiTexts.imageFusionStudioSwapInstructionsButtonTooltip,
+              imageFusionStudioImportFromGalleryButtonLabel: uiTexts.imageFusionStudioImportFromGalleryButtonLabel, 
+              imageFusionStudioChineseInstructionLabel: uiTexts.imageFusionStudioChineseInstructionLabel, 
+              imageFusionStudioEnglishInstructionLabel: uiTexts.imageFusionStudioEnglishInstructionLabel, 
+              imageFusionStudioTranslateToEnButtonLabel: uiTexts.imageFusionStudioTranslateToEnButtonLabel, 
+              imageFusionStudioTranslateToZhButtonLabel: uiTexts.imageFusionStudioTranslateToZhButtonLabel, 
+              imageSelectorModalTitle: uiTexts.imageSelectorModalTitle,
+              imageSelectorModalAllTab: uiTexts.imageSelectorModalAllTab,
+              imageSelectorModalFavoritesTab: uiTexts.imageSelectorModalFavoritesTab,
+              imageSelectorModalNoImages: uiTexts.imageSelectorModalNoImages,
+              imageSelectorModalNoFavorites: uiTexts.imageSelectorModalNoFavorites,
+              favoriteImageButtonTooltip: uiTexts.favoriteImageButtonTooltip, 
+              unfavoriteImageButtonTooltip: uiTexts.unfavoriteImageButtonTooltip, 
+            }}
+            aiSystemPrompts={{
+                imageFusionInstructionSuggestion: aiSystemPrompts.imageFusionInstructionSuggestion,
+                translateToEnglish: aiSystemPrompts.translateToEnglish,
+                translateToChinese: aiSystemPrompts.translateToChinese,
+                imageFusionSlotDescription: aiSystemPrompts.imageFusionSlotDescription,
+            }}
+            imageGenerationSettings={settings.imageGeneration}
+            appContextThemeEn={settings.appContextThemeEn}
+            appContextThemeZh={settings.appContextThemeZh}
+            fillPromptTemplate={fillPromptTemplate}
+            imageHistory={imageHistory}
+          />
+        )}
+        {showSubjectPhraseSuggestionsModal && (
+          <SubjectPhraseSuggestionsModal
+            isOpen={showSubjectPhraseSuggestionsModal}
+            onClose={() => setShowSubjectPhraseSuggestionsModal(false)}
+            suggestions={subjectPhraseSuggestions}
+            onApplySuggestion={handleApplySubjectPhraseSuggestion}
+            isLoadingSuggestions={isLoadingSubjectPhraseSuggestions}
+            title={uiTexts.subjectPhraseSuggestionsModalTitle.textZh}
+            thinkingProcessMessages={subjectPhraseThinkingMessages}
+            currentThinkingMessageIndex={currentSubjectPhraseThinkingIndex}
+            error={subjectPhraseSuggestionError}
+            onRegenerate={handleFetchSubjectPhraseSuggestions}
+          />
+        )}
+        {showAddCategoryModal && (
+            <AddCategoryModal
+                isOpen={showAddCategoryModal}
+                onClose={toggleAddCategoryModal}
+                onAddCategory={handleAddNewCategory}
+                existingCategoryIds={Object.keys(customPromptCategorySettings)}
+                uiTexts={{ addCategoryModalTitle: uiTexts.addCategoryModalTitle }}
+                geminiApiKeySet={!!geminiApiKey}
+                ai={ai}
+                fillPromptTemplate={fillPromptTemplate}
+                aiSystemPrompts={{
+                    aiGenerateCategoryID: aiSystemPrompts.aiGenerateCategoryID,
+                    translateToEnglish: aiSystemPrompts.translateToEnglish,
+                    translateToChinese: aiSystemPrompts.translateToChinese,
+                }}
+                onTranslateNameForModal={handleTranslateInputForModal}
+            />
+        )}
+        {showAISuggestedCategoryTermsModal && targetCategoryForAISuggestions && (
+            <AISuggestedCategoryTermsModal
+                isOpen={showAISuggestedCategoryTermsModal}
+                onClose={() => { 
+                    setShowAISuggestedCategoryTermsModal(false); 
+                    setTargetCategoryForAISuggestions(null);
+                }}
+                targetCategory={targetCategoryForAISuggestions}
+                suggestions={aiSuggestedCategoryTerms}
+                onAddTerms={handleAddMultipleTermsToCategoryFromModal}
+                isLoadingSuggestions={isLoadingAISuggestedCategoryTerms}
+                title={uiTexts.aiSuggestedCategoryTermsModalTitle.textZh}
+                thinkingProcessMessages={aiSuggestedCategoryTermsThinkingMessages}
+                currentThinkingMessageIndex={currentAISuggestedCategoryTermsThinkingIndex}
+                error={aiSuggestedCategoryTermsError}
+                onRegenerate={handleFetchAISuggestedCategoryTerms}
+            />
+        )}
       </main>
-      {showAiSuggestionsModal && (<AISuggestionsModal isOpen={showAiSuggestionsModal} onClose={() => setShowAiSuggestionsModal(false)} suggestions={aiSuggestedTerms} onAddTerm={addAISuggestedTerm} activeTerms={activePromptTerms} onRegenerate={handleGetAISuggestions} isLoadingSuggestions={isLoadingAiSuggestions} />)}
-      <ImageDetailModal isOpen={!!selectedImageForModal} onClose={() => { setSelectedImageForModal(null); setSelectedImageIndex(null);}} image={selectedImageForModal} currentIndex={selectedImageIndex} totalImages={imageHistory.length} onNavigate={handleNavigateImageDetail} />
-      <SettingsModal isOpen={showSettingsModal} onClose={toggleSettingsModal} />
-      <AddStyleModal isOpen={showAddStyleModal} onClose={toggleAddStyleModal} onAddStyle={handleAddCustomStyle} onTranslateName={handleTranslateNameToEnglish} geminiApiKeySet={!!geminiApiKey} />
-      <AddCustomTermModal 
-        isOpen={showAddCustomTermModal} 
-        onClose={() => toggleAddCustomTermModal()} 
-        onAddTerm={handleAddCustomTerm}
-        onTranslate={handleTranslateInputForModal}
-        categoryId={currentCategoryForCustomTerm?.id || null}
-        categoryName={currentCategoryForCustomTerm?.name}
-        geminiApiKeySet={!!geminiApiKey}
-      />
-      <div className="lg:hidden fixed bottom-6 right-6 z-50"> <IconButton onClick={scrollToImageGenerator} aria-label="捲動至圖像生成區" title="捲動至圖像生成區" className="bg-black text-white rounded-full p-3 shadow-lg hover:bg-gray-800"> <ChevronDoubleDownIcon className="w-6 h-6" /> </IconButton> </div>
     </div>
   );
 };
 
-const App: React.FC = () => (<SettingsProvider><AppContent /></SettingsProvider>);
-export default App;
+const initiateFullAISetup = async (themeInput: string, reportProgress: AISetupProgressCallback, context: SettingsContextType): Promise<{ themeEn: string; themeZh: string } | null> => { 
+    if (!process.env.API_KEY) {
+        const defaultThemeEn = "Interior Design";
+        const defaultThemeZh = "室內設計";
+        reportProgress(
+            ["Gemini API 金鑰未設定。將使用預設設定。"], 1, 1, true, 
+            "Gemini API 金鑰未設定。無法執行AI設定調整。將載入應用程式預設設定。"
+        );
+        context.updateSettings(prev => ({...prev, appContextThemeEn: defaultThemeEn, appContextThemeZh: defaultThemeZh}));
+        context.saveSettings(); // Save default settings if API key is missing
+        return { themeEn: defaultThemeEn, themeZh: defaultThemeZh };
+    }
+
+    const aiForSetup = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    const allThinkingSteps = [
+        "重設編輯器內設定為出廠預設...", // Step 1
+        `理解產業脈絡: ${themeInput.substring(0, 40)}...`, // Step 2
+        "AI 正在生成應用程式主題 (中/英文)...", // Step 3
+        "分析 AI 系統提示詞結構...", // Step 4
+        "檢閱 UI 文字標籤以進行調整...", // Step 5
+        "評估提示詞分類與詞語的主題一致性...", // Step 6
+        "評估設計風格的適應性 (名稱、基礎提示詞、清空細節)...", // Step 7
+        "評估空間類型的適應性 (名稱)...", // Step 8
+        "生成更新後的 JSON 結構草案...", // Step 9
+        "最終化設定調整...", // Step 10
+        "即將完成 AI 設定更新！", // Step 11
+    ];
+    const totalProgressSteps = allThinkingSteps.length;
+    let currentProgressStepNum = 0;
+
+    try {
+        // Step 1: Reset local settings in editor
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps);
+        let newSettings = JSON.parse(JSON.stringify(contextInitialAppSettings)) as AppSettings;
+
+        // Step 2: Understand context (visual step)
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps);
+        
+        const metaPromptTemplateDetails = DEFAULT_AI_SYSTEM_PROMPTS.metaUpdateAllEditableSettings;
+        if (!metaPromptTemplateDetails) {
+            const errorMsg = "找不到 AI 設定更新的元提示詞模板。";
+            reportProgress(allThinkingSteps, currentProgressStepNum, totalProgressSteps, true, errorMsg);
+            context.updateSettings(prev => ({...prev, appContextThemeEn: "Interior Design", appContextThemeZh: "室內設計"}));
+            context.saveSettings();
+            return { themeEn: "Interior Design", themeZh: "室內設計" };
+        }
+        
+        const settingsForAI = JSON.parse(JSON.stringify(contextInitialAppSettings));
+        const filledPrompt = fillPromptTemplate(metaPromptTemplateDetails.template, {
+            industryContext: themeInput,
+            currentAISystemPromptsJSON: JSON.stringify(settingsForAI.aiSystemPrompts),
+            currentEditableUITextsJSON: JSON.stringify(settingsForAI.uiTexts),
+            currentCustomPromptCategoriesJSON: JSON.stringify(settingsForAI.customPromptCategorySettings),
+            currentDesignStylesJSON: JSON.stringify(Array.isArray(settingsForAI.designStyles) ? settingsForAI.designStyles : []), 
+            existingStyleNamesJSON: JSON.stringify((newSettings.designStyles || []).map(s => `${s.nameEn} (${s.nameZh})`)),
+            currentRoomTypesJSON: JSON.stringify(Array.isArray(settingsForAI.roomTypes) ? settingsForAI.roomTypes : []),
+            existingRoomTypeNamesJSON: JSON.stringify((newSettings.roomTypes || []).map(rt => `${rt.termEn} (${rt.termZh})`)),
+            availableCategoryIdsJSON: JSON.stringify(Object.keys(settingsForAI.customPromptCategorySettings)),
+        }); 
+
+        const response = await aiForSetup.models.generateContent({
+            model: 'gemini-2.5-flash-preview-04-17',
+            contents: filledPrompt,
+            config: { responseMimeType: "application/json" }
+        });
+
+        const parsedResponse = parseGeminiJsonResponse<{
+            updatedAppContextThemeEn?: string; 
+            updatedAppContextThemeZh?: string; 
+            updatedAISystemPrompts?: AISystemPrompts;
+            updatedUITexts?: UITexts; 
+            updatedCustomPromptCategories?: CustomPromptCategorySettings;
+            updatedDesignStyles?: DesignStyle[];
+            updatedRoomTypes?: PromptTerm[]; 
+        }>(response.text);
+
+        if (!parsedResponse) throw new Error("AI 返回的設定更新資料格式不正確或無法解析。");
+        
+        // Step 3: Processing App Context Theme
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        if (parsedResponse.updatedAppContextThemeEn) newSettings.appContextThemeEn = parsedResponse.updatedAppContextThemeEn;
+        else newSettings.appContextThemeEn = "Interior Design"; 
+        if (parsedResponse.updatedAppContextThemeZh) newSettings.appContextThemeZh = parsedResponse.updatedAppContextThemeZh;
+        else newSettings.appContextThemeZh = "室內設計"; 
+        
+        // Step 4: Analyze AI System Prompts
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        if (parsedResponse.updatedAISystemPrompts) newSettings.aiSystemPrompts = deepMerge(newSettings.aiSystemPrompts, parsedResponse.updatedAISystemPrompts);
+        
+        // Step 5: Review UI Text Labels
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        if (parsedResponse.updatedUITexts) {
+            const originalHeaderTitle = newSettings.uiTexts.headerTitle;
+            newSettings.uiTexts = deepMerge(newSettings.uiTexts, parsedResponse.updatedUITexts);
+            newSettings.uiTexts.headerTitle = originalHeaderTitle; 
+        }
+
+        // Step 6: Assess Prompt Categories
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        if (parsedResponse.updatedCustomPromptCategories) newSettings.customPromptCategorySettings = deepMerge(newSettings.customPromptCategorySettings, parsedResponse.updatedCustomPromptCategories);
+        
+        // Step 7: Assess Design Styles
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        if (parsedResponse.updatedDesignStyles && Array.isArray(parsedResponse.updatedDesignStyles)) {
+            newSettings.designStyles = parsedResponse.updatedDesignStyles.map(styleFromAI => {
+                 const originalDefaultStyle = (contextInitialAppSettings.designStyles || []).find(s => s.id === styleFromAI.id);
+                return {
+                    ...styleFromAI,
+                    descriptionEn: "", 
+                    descriptionZh: "", 
+                    dynamicDetails: [ 
+                        { labelEn: "Details 1", labelZh: "細節 1", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) },
+                        { labelEn: "Details 2", labelZh: "細節 2", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) }
+                    ] as [DynamicDetailSet, DynamicDetailSet],
+                    isCustom: originalDefaultStyle ? originalDefaultStyle.isCustom : true, 
+                    relatedCategories: Array.isArray(styleFromAI.relatedCategories) ? styleFromAI.relatedCategories : Object.keys(newSettings.customPromptCategorySettings || {}),
+                };
+            });
+        } else {
+            newSettings.designStyles = (contextInitialAppSettings.designStyles || []).map(style => ({
+                ...style, descriptionEn: "", descriptionZh: "",
+                dynamicDetails: [ 
+                    { labelEn: "Details 1", labelZh: "細節 1", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) },
+                    { labelEn: "Details 2", labelZh: "細節 2", termsEn: ensureThreeTerms([]), termsZh: ensureThreeTerms([]) }
+                ] as [DynamicDetailSet, DynamicDetailSet],
+            }));
+        }
+
+        // Step 8: Assess Room Types
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        if (parsedResponse.updatedRoomTypes && Array.isArray(parsedResponse.updatedRoomTypes)) {
+            const defaultRoomTypesSource = settingsForAI.roomTypes || [];
+            const rethemedRoomTypes = defaultRoomTypesSource.map(defaultRt => {
+                const aiMatch = parsedResponse.updatedRoomTypes!.find(aiRt => aiRt.id === defaultRt.id);
+                if (aiMatch && typeof aiMatch.termEn === 'string' && aiMatch.termEn.trim() !== '' && typeof aiMatch.termZh === 'string' && aiMatch.termZh.trim() !== '') {
+                    return { ...defaultRt, termEn: aiMatch.termEn, termZh: aiMatch.termZh, isCustom: false };
+                }
+                return defaultRt;
+            });
+            newSettings.roomTypes = rethemedRoomTypes;
+        } else {
+            newSettings.roomTypes = JSON.parse(JSON.stringify(settingsForAI.roomTypes));
+        }
+
+        // Step 9: Generate Draft JSON (visual step)
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+
+        // Step 10: Finalize Settings (applying to context)
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps); 
+        context.updateSettings(newSettings); 
+        context.saveSettings(); // Automatically save settings
+        
+        // Step 11: Final message
+        const finalMessage = allThinkingSteps[allThinkingSteps.length - 1];
+        reportProgress(allThinkingSteps, ++currentProgressStepNum, totalProgressSteps, false, finalMessage); 
+        return { themeEn: newSettings.appContextThemeEn || "Error", themeZh: newSettings.appContextThemeZh || "錯誤" };
+
+    } catch (e: any) {
+        const errorDisplayMessage = `AI設定調整失敗: ${e.message || '未知錯誤'}`;
+        reportProgress(allThinkingSteps, Math.max(1, currentProgressStepNum), totalProgressSteps, true, errorDisplayMessage);
+        context.updateSettings(prev => ({...prev, appContextThemeEn: "Interior Design", appContextThemeZh: "室內設計"}));
+        context.saveSettings();
+        return { themeEn: "Interior Design", themeZh: "室內設計" };
+    }
+  };
+
+
+export const App = () => {
+  const [isLoadingInitialSettings, setIsLoadingInitialSettings] = useState(true);
+  const [initialThemeEn, setInitialThemeEn] = useState<string | null>(null); 
+  const [initialThemeZh, setInitialThemeZh] = useState<string | null>(null); 
+  const [showTutorial, setShowTutorial] = useState(false); 
+
+  const handleAISetupComplete = useCallback((themeEnFromLoading: string, themeZhFromLoading: string) => { 
+    setInitialThemeEn(themeEnFromLoading); 
+    setInitialThemeZh(themeZhFromLoading);
+    setShowTutorial(true); 
+    setIsLoadingInitialSettings(false);
+  }, []);
+
+  const handleConfirmTutorial = () => {
+    setShowTutorial(false);
+  };
+  
+  const LoadingScreenWithContext: React.FC<{
+    onLoadingComplete: (themeEn: string, themeZh: string) => void;
+  }> = ({ onLoadingComplete }) => {
+    const context = useContext(SettingsContext);
+    if (!context) {
+        console.error("SettingsContext not found in LoadingScreenWithContext. This should not happen.");
+        return <div className="flex items-center justify-center min-h-screen text-lg text-red-700">嚴重錯誤：設定組件載入失敗！</div>;
+    }
+    return (
+        <LoadingScreen 
+            onLoadingComplete={onLoadingComplete} 
+            onInitiateAISetup={(themeInput, cb) => initiateFullAISetup(themeInput, cb, context)}
+        />
+    );
+  };
+
+  // Define a component to access context for ConfirmationTutorialPage
+  const ConfirmationTutorialPageWithContext: React.FC<{
+    theme: string;
+    onConfirm: () => void;
+  }> = ({ theme, onConfirm }) => {
+    const context = useContext(SettingsContext);
+    if (!context) {
+      console.error("SettingsContext not found in ConfirmationTutorialPageWithContext.");
+      return <div className="flex items-center justify-center min-h-screen text-lg text-red-700">嚴重錯誤：確認教學頁面設定載入失敗！</div>;
+    }
+    return (
+      <ConfirmationTutorialPage
+        theme={theme}
+        onConfirm={onConfirm}
+        uiTexts={context.settings.uiTexts}
+        appSettings={context.settings}
+      />
+    );
+  };
+
+
+  if (isLoadingInitialSettings) {
+    return (
+      <SettingsProvider>
+        <LoadingScreenWithContext onLoadingComplete={handleAISetupComplete} />
+      </SettingsProvider>
+    );
+  }
+
+  if (showTutorial && initialThemeEn && initialThemeZh) { 
+    return (
+      <SettingsProvider>
+        <ConfirmationTutorialPageWithContext 
+          theme={initialThemeZh} 
+          onConfirm={handleConfirmTutorial}
+        />
+      </SettingsProvider>
+    );
+  }
+
+  return (
+    <SettingsProvider>
+      <AppContent />
+    </SettingsProvider>
+  );
+};

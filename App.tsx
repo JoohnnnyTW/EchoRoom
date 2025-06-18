@@ -54,29 +54,42 @@ const parseGeminiJsonResponse = <T,>(responseText: string): T | null => {
   const match = jsonStr.match(fenceRegex);
   if (match && match[2]) {
     jsonStr = match[2].trim();
-     // Remove BOM again if it was inside the fence
+    // Remove BOM again if it was inside the fence
     jsonStr = jsonStr.replace(/^\uFEFF/, '');
   }
 
+  // Escape common control characters that might be unescaped in strings
+  // IMPORTANT: This assumes that if `responseMimeType: "application/json"` was used,
+  // the AI should not be using these characters for JSON structure itself,
+  // only within string values where they need escaping.
+  jsonStr = jsonStr
+    .replace(/\\/g, '\\\\') // First, escape all existing backslashes
+    .replace(/"/g, '\\"')   // Then, escape all double quotes
+    .replace(/\n/g, '\\n')  // Escape actual newline characters
+    .replace(/\r/g, '\\r')  // Escape actual carriage return characters
+    .replace(/\t/g, '\\t')  // Escape actual tab characters
+    .replace(/\b/g, '\\b')  // Escape actual backspace characters
+    .replace(/\f/g, '\\f'); // Escape actual form feed characters
+
+  // Now, unescape the legitimately escaped ones (that became \\\\, \\", etc.)
+  // This order is crucial.
+  jsonStr = jsonStr
+    .replace(/\\\\n/g, '\\n')
+    .replace(/\\\\r/g, '\\r')
+    .replace(/\\\\t/g, '\\t')
+    .replace(/\\\\b/g, '\\b')
+    .replace(/\\\\f/g, '\\f')
+    .replace(/\\\\"/g, '\\"')
+    .replace(/\\\\\\\\/g, '\\\\');
+
+
   // Remove Line Separator (U+2028) and Paragraph Separator (U+2029) characters, as they are not valid in JSON strings
   jsonStr = jsonStr.replace(/[\u2028\u2029]/g, '');
-
-  // Aggressively try to fix common JSON issues from AI
-  // The following global replacements for \n, \r, \t were too broad and could corrupt
-  // valid JSON structural newlines, causing parsing errors at the beginning of the JSON string.
-  // Removed:
-  // jsonStr = jsonStr.replace(/([^\\])\n/g, '$1\\n');
-  // jsonStr = jsonStr.replace(/([^\\])\r/g, '$1\\r');
-  // jsonStr = jsonStr.replace(/([^\\])\t/g, '$1\\t');
   
-  // 2. Trailing commas (complex to fix reliably with regex for all cases, but try simple ones)
+  // Attempt to fix trailing commas (simple cases)
   jsonStr = jsonStr.replace(/,\s*(\}|\])/g, '$1');
 
-  // 3. Ensure property names are double-quoted if AI forgets
-  // This is very tricky and risky with regex. A more robust parser might be needed if this is common.
-  // For now, we'll rely on the `responseMimeType: "application/json"` and AI's capability.
-
-  // 4. Other minor syntax fixes (some retained from previous versions)
+  // Minor syntax fixes (retained from previous versions, inspect if still needed with better escaping)
   jsonStr = jsonStr.replace(/"(,\s*)(isCustom|categoryId)"\s*:/g, '$1"$2":'); 
   jsonStr = jsonStr.replace(/"([^"]+)""\s*:/g, '"$1":'); 
   jsonStr = jsonStr.replace(/(^|\s|,|\{|\[)(isCustom|categoryId)"\s*:/g, '$1"$2":'); 
@@ -92,7 +105,6 @@ const parseGeminiJsonResponse = <T,>(responseText: string): T | null => {
     return JSON.parse(jsonStr) as T;
   } catch (e: any) {
     console.error("未能解析JSON回應:", e.message, "原始文本:", responseText, "清理後文本 (前500字):", jsonStr.substring(0, 500));
-    // Log more details if possible
     const positionMatch = e.message.match(/position\s+(\d+)/);
     if (positionMatch && positionMatch[1]) {
       const errorPos = parseInt(positionMatch[1], 10);

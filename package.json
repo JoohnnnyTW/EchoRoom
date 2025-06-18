@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build:js": "esbuild index.tsx --bundle --outfile=dist/index.js --format=esm --platform=browser --jsx=automatic",
+    "build:js": "esbuild index.tsx --bundle --outfile=dist/index.js --format=esm --platform=browser --jsx=automatic --external:react --external:react-dom --external:react-dom/client --external:@google/genai --external:zod --external:framer-motion --external:react-dropzone --external:react/jsx-runtime",
     "build:copy": "mkdir -p dist && cp index.html dist/index.html && cp env-config.js dist/env-config.js",
     "build": "node create-env-config.js && npm run build:js && npm run build:copy"
   },

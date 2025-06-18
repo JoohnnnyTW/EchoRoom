@@ -3,6 +3,11 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "build": "node create-env-config.js"
+    "build:js": "esbuild index.tsx --bundle --outfile=dist/index.js --format=esm --platform=browser --jsx=automatic",
+    "build:copy": "mkdir -p dist && cp index.html dist/index.html && cp env-config.js dist/env-config.js",
+    "build": "node create-env-config.js && npm run build:js && npm run build:copy"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0"
   }
 }

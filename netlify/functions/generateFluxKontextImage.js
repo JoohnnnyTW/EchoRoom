@@ -1,8 +1,8 @@
 // netlify/functions/generateFluxKontextImage.js
 const fetch = require('node-fetch');
 
-const POLLING_INTERVAL_MS = 2500; // 2.5 seconds
-const MAX_POLLING_ATTEMPTS = 10; // Reduced from 20 to 10
+const POLLING_INTERVAL_MS = 3000; // 3 seconds
+const MAX_POLLING_ATTEMPTS = 5; // Max attempts, e.g., 5 * 3s = 15 seconds
 const FLUX_KONTEXT_MAX_ENDPOINT = 'https://api.bfl.ai/v1/flux-kontext-max';
 
 function getMimeTypeFromFluxOutputFormat(outputFormat, fallback = 'image/png') {

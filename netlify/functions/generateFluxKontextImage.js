@@ -2,7 +2,7 @@
 const fetch = require('node-fetch');
 
 const POLLING_INTERVAL_MS = 2500; // 2.5 seconds
-const MAX_POLLING_ATTEMPTS = 20; // Max attempts, e.g., 20 * 2.5s = 50 seconds
+const MAX_POLLING_ATTEMPTS = 10; // Reduced from 20 to 10
 const FLUX_KONTEXT_MAX_ENDPOINT = 'https://api.bfl.ai/v1/flux-kontext-max';
 
 function getMimeTypeFromFluxOutputFormat(outputFormat, fallback = 'image/png') {

@@ -45,9 +45,11 @@ const IMAGE_HISTORY_STORAGE_KEY = 'echoRoomImageHistory_v1';
 
 const parseGeminiJsonResponse = <T,>(responseText: string): T | null => {
   let jsonStr = responseText.trim();
-  
+
   // Remove BOM (Byte Order Mark) if present at the very beginning
-  jsonStr = jsonStr.replace(/^\uFEFF/, '');
+  if (jsonStr.charCodeAt(0) === 0xFEFF) {
+    jsonStr = jsonStr.substring(1);
+  }
 
   // Remove markdown fence if present
   const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
@@ -55,63 +57,45 @@ const parseGeminiJsonResponse = <T,>(responseText: string): T | null => {
   if (match && match[2]) {
     jsonStr = match[2].trim();
     // Remove BOM again if it was inside the fence
-    jsonStr = jsonStr.replace(/^\uFEFF/, '');
+    if (jsonStr.charCodeAt(0) === 0xFEFF) {
+      jsonStr = jsonStr.substring(1);
+    }
   }
 
-  // Escape common control characters that might be unescaped in strings
-  // IMPORTANT: This assumes that if `responseMimeType: "application/json"` was used,
-  // the AI should not be using these characters for JSON structure itself,
-  // only within string values where they need escaping.
-  jsonStr = jsonStr
-    .replace(/\\/g, '\\\\') // First, escape all existing backslashes
-    .replace(/"/g, '\\"')   // Then, escape all double quotes
-    .replace(/\n/g, '\\n')  // Escape actual newline characters
-    .replace(/\r/g, '\\r')  // Escape actual carriage return characters
-    .replace(/\t/g, '\\t')  // Escape actual tab characters
-    .replace(/\b/g, '\\b')  // Escape actual backspace characters
-    .replace(/\f/g, '\\f'); // Escape actual form feed characters
-
-  // Now, unescape the legitimately escaped ones (that became \\\\, \\", etc.)
-  // This order is crucial.
-  jsonStr = jsonStr
-    .replace(/\\\\n/g, '\\n')
-    .replace(/\\\\r/g, '\\r')
-    .replace(/\\\\t/g, '\\t')
-    .replace(/\\\\b/g, '\\b')
-    .replace(/\\\\f/g, '\\f')
-    .replace(/\\\\"/g, '\\"')
-    .replace(/\\\\\\\\/g, '\\\\');
-
-
-  // Remove Line Separator (U+2028) and Paragraph Separator (U+2029) characters, as they are not valid in JSON strings
-  jsonStr = jsonStr.replace(/[\u2028\u2029]/g, '');
+  // Attempt to fix malformations where extraneous words appear
+  // Case 1: ... "value" EXTRANEOUS_WORD } ...  => remove word
+  // \p{L} matches any kind of letter from any language. Requires 'u' flag.
+  jsonStr = jsonStr.replace(/(")\s*(\p{L}+)\s*(\})/gu, '$1$3');
   
-  // Attempt to fix trailing commas (simple cases)
-  jsonStr = jsonStr.replace(/,\s*(\}|\])/g, '$1');
+  // Case 2: ... "value" EXTRANEOUS_WORD { ... => remove word, insert comma
+  jsonStr = jsonStr.replace(/(")\s*(\p{L}+)\s*(\{)/gu, '$1,$3');
 
-  // Minor syntax fixes (retained from previous versions, inspect if still needed with better escaping)
-  jsonStr = jsonStr.replace(/"(,\s*)(isCustom|categoryId)"\s*:/g, '$1"$2":'); 
-  jsonStr = jsonStr.replace(/"([^"]+)""\s*:/g, '"$1":'); 
-  jsonStr = jsonStr.replace(/(^|\s|,|\{|\[)(isCustom|categoryId)"\s*:/g, '$1"$2":'); 
-  jsonStr = jsonStr.replace(/([{,]\s*)(isCustom|categoryId)\s*:/g, '$1"$2":'); 
-  jsonStr = jsonStr.replace(/""(isCustom|categoryId)"\s*:\s*/g, '"$1": '); 
-  jsonStr = jsonStr.replace(/(")\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
-  jsonStr = jsonStr.replace(/(true|false|null)\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
-  jsonStr = jsonStr.replace(/([0-9])\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
-  jsonStr = jsonStr.replace(/(\})\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
-  jsonStr = jsonStr.replace(/(\])\s*("(?!"[^"]*":\s*\{)[^"]*"\s*:)/g, '$1, $2'); 
 
   try {
     return JSON.parse(jsonStr) as T;
   } catch (e: any) {
-    console.error("未能解析JSON回應:", e.message, "原始文本:", responseText, "清理後文本 (前500字):", jsonStr.substring(0, 500));
+    console.error("未能解析JSON回應:", e.message);
+    console.error("原始文本 (前500字):", responseText.substring(0, 500));
+    console.error("嘗試解析的文本 (清理後，前500字):", jsonStr.substring(0, 500));
+    
+    let errorContext = "";
     const positionMatch = e.message.match(/position\s+(\d+)/);
     if (positionMatch && positionMatch[1]) {
       const errorPos = parseInt(positionMatch[1], 10);
-      const contextChars = 150;
-      console.error(`錯誤發生位置附近文本 (清理後): ...${jsonStr.substring(Math.max(0, errorPos - contextChars), Math.min(jsonStr.length, errorPos + contextChars))}...`);
+      const contextChars = 150; 
+      const start = Math.max(0, errorPos - contextChars);
+      const end = Math.min(jsonStr.length, errorPos + contextChars);
+      errorContext = `...${jsonStr.substring(start, errorPos)}[ERROR_AT_POS_${errorPos}]${jsonStr.substring(errorPos, end)}...`;
+      console.error(`錯誤發生位置附近文本 (清理後): ${errorContext}`);
     }
-    alert(`AI 回應解析失敗。請檢查控制台以獲取詳細資訊。\n錯誤: ${e.message}\n部分原始文本: ${responseText.substring(0,200)}...`);
+    
+    let alertMessage = `AI 回應解析失敗。請檢查控制台以獲取詳細資訊。\n錯誤: ${e.message}`;
+    if(errorContext) {
+      alertMessage += `\n\n部分相關文本 (清理後):\n${errorContext.substring(0, 300).replace(`[ERROR_AT_POS_${parseInt(positionMatch?.[1],10)}]`, "<-- 此處附近") }...`;
+    } else {
+      alertMessage += `\n\n部分原始文本:\n${responseText.substring(0,200)}...`;
+    }
+    alert(alertMessage);
     return null;
   }
 };
